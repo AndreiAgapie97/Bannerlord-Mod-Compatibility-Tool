@@ -1,0 +1,8 @@
+* text=auto
+
+*.slnx text eol=crlf
+*.cs text eol=crlf
+*.csproj text eol=crlf
+*.xaml text eol=crlf
+*.md text eol=lf
+*.json text eol=lf

@@ -1,0 +1,4 @@
+Duplicate Harmony patches detected
+Target: TaleWorlds.CampaignSystem.CampaignBehaviors.DefaultClanPoliticsModel.CalculateInfluence()
+Patch: Prefix Module=Byzantium1071
+Patch: Transpiler Module=AIInfluence

@@ -1,0 +1,2 @@
+Byzantium1071 Prefix TaleWorlds.CampaignSystem.CampaignBehaviors.DefaultClanPoliticsModel.CalculateInfluence()
+AIInfluence Transpiler TaleWorlds.CampaignSystem.CampaignBehaviors.DefaultClanPoliticsModel.CalculateInfluence()
