@@ -12,7 +12,6 @@ The desktop app is the primary product. It scans installed modules, reads launch
 
 - `BannerlordModCompat.App` - WPF desktop app
 - `BannerlordModCompat.Core` - scanner, analyzers, load-order logic, runtime correlation
-- `BannerlordModCompat.Cli` - command-line entry point
 - `BannerlordModCompat.Tests` - automated regression tests
 - `SyntheticHarmonyLogs` - small synthetic fixtures used by tests
 
@@ -25,12 +24,6 @@ The desktop app is the primary product. It scans installed modules, reads launch
 
 ```powershell
 dotnet run --project BannerlordModCompat.App
-```
-
-## Run the CLI
-
-```powershell
-dotnet run --project BannerlordModCompat.Cli -- --help
 ```
 
 ## Build

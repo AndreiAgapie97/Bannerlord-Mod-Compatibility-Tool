@@ -1,6 +1,5 @@
 <Solution>
   <Project Path="BannerlordModCompat.App/BannerlordModCompat.App.csproj" />
-  <Project Path="BannerlordModCompat.Cli/BannerlordModCompat.Cli.csproj" />
   <Project Path="BannerlordModCompat.Core/BannerlordModCompat.Core.csproj" />
   <Project Path="BannerlordModCompat.Tests/BannerlordModCompat.Tests.csproj" />
 </Solution>

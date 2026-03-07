@@ -1259,24 +1259,11 @@
                                                 Content="Reset View"
                                                 Click="BtnResetFindingsView_Click" />
                                     </Grid>
-                                    <Grid Margin="0,6,0,0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <CheckBox x:Name="ChkAdvancedDetailMode"
-                                                  Grid.Column="0"
-                                                  Margin="0,4,14,0"
-                                                  Content="Show advanced technical detail"
-                                                  Checked="ChkAdvancedDetailMode_Changed"
-                                                  Unchecked="ChkAdvancedDetailMode_Changed" />
-                                        <CheckBox x:Name="ChkCompactFindingsLayout"
-                                                  Grid.Column="1"
-                                                  Margin="0,4,0,0"
-                                                  Content="Compact findings layout"
-                                                  Checked="ChkCompactFindingsLayout_Changed"
-                                                  Unchecked="ChkCompactFindingsLayout_Changed" />
-                                    </Grid>
+                                    <CheckBox x:Name="ChkCompactFindingsLayout"
+                                              Margin="0,6,0,0"
+                                              Content="Compact findings layout"
+                                              Checked="ChkCompactFindingsLayout_Changed"
+                                              Unchecked="ChkCompactFindingsLayout_Changed" />
                                     <TextBlock Margin="0,4,0,0"
                                                Foreground="#D3C1A2"
                                                Text="Actionable View keeps only critical/high findings so triage stays focused."
@@ -1732,126 +1719,6 @@
                     </Grid>
                 </TabItem>
 
-                <TabItem x:Name="TabScanDiff">
-                    <TabItem.Header>
-                        <StackPanel Orientation="Horizontal">
-                            <Viewbox Width="14" Height="14" Margin="0,0,6,0">
-                                <Canvas Width="16" Height="16">
-                                    <Path Stroke="#F3E5C8" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,4 L8,4 M11,4 L14,4" />
-                                    <Path Stroke="#C89A56" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M5,11 L11,11 M8,8 L8,14" />
-                                </Canvas>
-                            </Viewbox>
-                            <TextBlock VerticalAlignment="Center" Text="Scan Diff" />
-                        </StackPanel>
-                    </TabItem.Header>
-                    <Grid Margin="10">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <Border Grid.Row="0"
-                                Style="{StaticResource TabActionBarStyle}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource ActionRowHintStyle}"
-                                           Text="Use this tab after each change to confirm that risk is moving in the right direction." />
-                                <Grid Margin="0,8,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Button Grid.Column="0"
-                                            Style="{StaticResource ActionRowButtonStyle}"
-                                            Content="Run Scan"
-                                            Click="BtnRunScan_Click" />
-                                    <Button Grid.Column="1"
-                                            Style="{StaticResource ActionRowButtonStyle}"
-                                            Content="Go Findings"
-                                            Click="BtnWorkflowGoFindings_Click" />
-                                    <Button Grid.Column="2"
-                                            Margin="0"
-                                            Style="{StaticResource ActionRowButtonStyle}"
-                                            Content="Go Load Order"
-                                            Click="BtnWorkflowGoLoadOrder_Click" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
-                        <Border
-                                Grid.Row="2"
-                                Margin="0,0,0,8"
-                                Padding="10"
-                                CornerRadius="8"
-                                Background="#171513"
-                                BorderBrush="#70552E"
-                                BorderThickness="1">
-                            <StackPanel>
-                                <Border Style="{StaticResource SectionBannerBorderStyle}">
-                                    <TextBlock Text="Change Since Previous Scan" Style="{StaticResource SectionBannerTextStyle}" />
-                                </Border>
-                                <TextBlock x:Name="TxtDiffSummary"
-                                           Margin="0,6,0,0"
-                                           Style="{StaticResource TabSectionHintStyle}"
-                                           Text="Run another scan to compare what appeared or disappeared." />
-                            </StackPanel>
-                        </Border>
-
-                        <Grid Grid.Row="2" Margin="0,0,0,8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Margin="0,0,8,0" Padding="10" CornerRadius="8" Background="#183629" BorderBrush="#3F8A6A" BorderThickness="1">
-                                <StackPanel>
-                                    <TextBlock Text="New Findings" Foreground="#B7F0D8" />
-                                    <TextBlock x:Name="TxtDiffNewCount" FontSize="20" FontWeight="Bold" Text="0" />
-                                </StackPanel>
-                            </Border>
-                            <Border Grid.Column="1" Margin="0,0,8,0" Padding="10" CornerRadius="8" Background="#3B291A" BorderBrush="#8C6540" BorderThickness="1">
-                                <StackPanel>
-                                    <TextBlock Text="Resolved Findings" Foreground="#F6DCBF" />
-                                    <TextBlock x:Name="TxtDiffResolvedCount" FontSize="20" FontWeight="Bold" Text="0" />
-                                </StackPanel>
-                            </Border>
-                            <Border Grid.Column="2" Padding="10" CornerRadius="8" Background="#271F18" BorderBrush="#72562F" BorderThickness="1">
-                                <StackPanel>
-                                    <TextBlock Text="Severity Changes" Foreground="#EAD7B4" />
-                                    <TextBlock x:Name="TxtDiffSeverityCount" FontSize="20" FontWeight="Bold" Text="0" />
-                                </StackPanel>
-                            </Border>
-                        </Grid>
-
-                        <Grid Grid.Row="3">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <GroupBox Grid.Column="0" Header="Appeared">
-                                <ListBox x:Name="ListDiffNew"
-                                         Background="#0F1217"
-                                         BorderBrush="#6D5330"
-                                         Foreground="#EADCC3" />
-                            </GroupBox>
-                            <GroupBox Grid.Column="1" Header="Resolved" Margin="8,0,8,0">
-                                <ListBox x:Name="ListDiffResolved"
-                                         Background="#0F1217"
-                                         BorderBrush="#6D5330"
-                                         Foreground="#EADCC3" />
-                            </GroupBox>
-                            <GroupBox Grid.Column="2" Header="Severity Changed">
-                                <ListBox x:Name="ListDiffSeverity"
-                                         Background="#0F1217"
-                                         BorderBrush="#6D5330"
-                                         Foreground="#EADCC3" />
-                            </GroupBox>
-                        </Grid>
-                    </Grid>
-                </TabItem>
-
                 <TabItem x:Name="TabLoadOrder">
                     <TabItem.Header>
                         <StackPanel Orientation="Horizontal">
@@ -1869,8 +1736,6 @@
                     </TabItem.Header>
                     <Grid Margin="10">
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
@@ -1902,80 +1767,7 @@
                             </StackPanel>
                         </Border>
 
-                        <Grid x:Name="GridLoadOrderMetrics" Grid.Row="1" Margin="0,0,0,8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-
-                            <Border Grid.Column="0" Margin="0,0,8,0" Padding="10" CornerRadius="8" Background="#2A2119" BorderBrush="#7A6135" BorderThickness="1">
-                                <StackPanel>
-                                    <TextBlock Text="Moved Modules" Foreground="#F0DDB2" />
-                                    <TextBlock x:Name="TxtLoadOrderMovedCount" FontSize="20" FontWeight="Bold" Text="0" />
-                                </StackPanel>
-                            </Border>
-                            <Border Grid.Column="1" Margin="0,0,8,0" Padding="10" CornerRadius="8" Background="#221B16" BorderBrush="#70552E" BorderThickness="1">
-                                <StackPanel>
-                                    <TextBlock Text="Unchanged Modules" Foreground="#E7D8BE" />
-                                    <TextBlock x:Name="TxtLoadOrderUnchangedCount" FontSize="20" FontWeight="Bold" Text="0" />
-                                </StackPanel>
-                            </Border>
-                            <Border Grid.Column="2" Padding="10" CornerRadius="8" Background="#2B2416" BorderBrush="#7A6338" BorderThickness="1">
-                                <StackPanel>
-                                    <TextBlock Text="Largest Move" Foreground="#F0DDB2" />
-                                    <TextBlock x:Name="TxtLoadOrderLargestMove" FontSize="20" FontWeight="Bold" Text="-" />
-                                </StackPanel>
-                            </Border>
-                            <Border Grid.Column="3" Margin="8,0,0,0" Padding="10" CornerRadius="8" Background="#1F241D" BorderBrush="#5E7658" BorderThickness="1">
-                                <StackPanel>
-                                    <TextBlock Text="Order Confidence" Foreground="#D9E4D0" />
-                                    <TextBlock x:Name="TxtLoadOrderConfidence" FontSize="20" FontWeight="Bold" Text="50%" />
-                                </StackPanel>
-                            </Border>
-                        </Grid>
-
-                        <Border x:Name="BorderLoadOrderSummaryCard"
-                                Grid.Row="2"
-                                Margin="0,0,0,8"
-                                Padding="10"
-                                CornerRadius="8"
-                                Background="#171513"
-                                BorderBrush="#70552E"
-                                BorderThickness="1">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-                                <TextBlock x:Name="TxtLoadOrderSummary"
-                                            VerticalAlignment="Center"
-                                            Foreground="#E2D1B6"
-                                            FontWeight="SemiBold"
-                                            Text="No scan yet." />
-                                <CheckBox x:Name="ChkLoadOrderMovedOnly"
-                                           Grid.Column="1"
-                                           Margin="12,0,0,0"
-                                           VerticalAlignment="Center"
-                                           Content="Show moved only"
-                                           Checked="LoadOrderFilter_Changed"
-                                           Unchecked="LoadOrderFilter_Changed" />
-                                <TextBlock x:Name="TxtLoadOrderHint"
-                                           Grid.Row="1"
-                                           Grid.ColumnSpan="2"
-                                           Margin="0,8,0,0"
-                                           Foreground="#D3C1A2"
-                                           Text="Tip: follow the Move Plan top-to-bottom, then run a quick in-game validation."
-                                           TextWrapping="Wrap" />
-                            </Grid>
-                        </Border>
-
-                        <Grid x:Name="GridLoadOrderWorkbench" Grid.Row="3">
+                        <Grid x:Name="GridLoadOrderWorkbench" Grid.Row="1">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition x:Name="ColLoadOrderPlan" Width="380" MinWidth="300" />
                                 <ColumnDefinition Width="10" />
@@ -2057,130 +1849,11 @@
                                                Text="No order changes inferred for enabled modules yet. Exact Slots is the source of truth; Do These Moves is the actionable subset." />
                                 </Border>
 
-                                 <TabControl Grid.Row="1"
-                                             x:Name="LoadOrderDetailsTabs"
-                                             BorderBrush="#5E4729"
-                                            Background="#101114"
-                                            Foreground="#F1E2C6">
-                                    <TabItem Header="Exact Slots">
-                                        <DataGrid x:Name="GridLoadOrder"
-                                                  AutoGenerateColumns="False"
-                                                  IsReadOnly="True"
-                                                  SelectionMode="Extended"
-                                                  SelectionUnit="FullRow"
-                                                  SelectionChanged="GridLoadOrder_SelectionChanged"
-                                                  PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                                  RowStyle="{StaticResource LoadOrderRowStyle}"
-                                  MinRowHeight="40"
-                                                  FrozenColumnCount="2"
-                                                  Background="#0F1217"
-                                                  BorderBrush="#6D5330"
-                                                  Foreground="#EADCC3"
-                                                  ScrollViewer.CanContentScroll="True"
-                                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                                  GridLinesVisibility="Horizontal"
-                                                  HeadersVisibility="Column">
-                                            <DataGrid.Columns>
-                                                <DataGridTemplateColumn Header="Type" Width="110">
-                                                    <DataGridTemplateColumn.CellTemplate>
-                                                        <DataTemplate>
-                                                            <Border Margin="2"
-                                                                    Padding="6,3"
-                                                                    CornerRadius="6"
-                                                                    Background="{Binding ModuleTypeBadgeBackground}"
-                                                                    BorderBrush="{Binding ModuleTypeBadgeBorder}"
-                                                                    BorderThickness="1">
-                                                                <TextBlock HorizontalAlignment="Center"
-                                                                           Foreground="{Binding ModuleTypeForeground}"
-                                                                           FontWeight="SemiBold"
-                                                                           Text="{Binding ModuleTypeText}" />
-                                                            </Border>
-                                                        </DataTemplate>
-                                                    </DataGridTemplateColumn.CellTemplate>
-                                                </DataGridTemplateColumn>
-                                                <DataGridTextColumn Header="Module" Binding="{Binding ModuleId}" Width="*" />
-                                                <DataGridTextColumn Header="Current #" Binding="{Binding CurrentIndexText}" Width="95" />
-                                                <DataGridTextColumn Header="Suggested #" Binding="{Binding SuggestedIndexText}" Width="95" />
-                                                <DataGridTextColumn Header="Change" Binding="{Binding DeltaText}" Width="95" />
-                                                <DataGridTextColumn Header="Action" Binding="{Binding ActionText}" Width="170" />
-                                                <DataGridTextColumn Header="Why It Matters" Binding="{Binding WhyText}" Width="1.5*" />
-                                            </DataGrid.Columns>
-                                        </DataGrid>
-                                    </TabItem>
-
-                                    <TabItem x:Name="TabLoadOrderWhy" Header="Why This Order">
-                                        <ListBox x:Name="ListLoadOrderBasis"
-                                                 Background="#0F1217"
-                                                 BorderBrush="#6D5330"
-                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                 Foreground="#EADCC3" />
-                                    </TabItem>
-
-                                    <TabItem x:Name="TabLoadOrderExpertBaseline" Header="Expert Baseline">
-                                        <ScrollViewer VerticalScrollBarVisibility="Auto"
-                                                      HorizontalScrollBarVisibility="Disabled">
-                                            <StackPanel Margin="6">
-                                                <TextBlock x:Name="TxtExpertBaselineSummary"
-                                                           Foreground="#D8C7AA"
-                                                           TextWrapping="Wrap"
-                                                           Text="Paste an expert load-order list and run an audit after scan." />
-                                                <Grid Margin="0,8,0,0">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <Button x:Name="BtnRunExpertBaselineAudit"
-                                                            Grid.Column="0"
-                                                            Style="{StaticResource ActionRowButtonStyle}"
-                                                            Content="Run Baseline Audit"
-                                                            Click="BtnRunExpertBaselineAudit_Click" />
-                                                    <Button x:Name="BtnClearExpertBaselineAudit"
-                                                            Grid.Column="1"
-                                                            Margin="0"
-                                                            Style="{StaticResource ActionRowButtonStyle}"
-                                                            Content="Clear Baseline"
-                                                            Click="BtnClearExpertBaselineAudit_Click" />
-                                                </Grid>
-                                                <TextBox x:Name="TxtExpertBaselineInput"
-                                                         Margin="0,8,0,0"
-                                                         MinHeight="130"
-                                                         MaxHeight="240"
-                                                         AcceptsReturn="True"
-                                                         TextWrapping="Wrap"
-                                                         VerticalScrollBarVisibility="Auto"
-                                                         HorizontalScrollBarVisibility="Disabled" />
-                                                <Grid Margin="0,8,0,0">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <GroupBox Grid.Column="0" Header="Out-of-Order Pairs" Margin="0,0,8,0">
-                                                        <ListBox x:Name="ListExpertBaselineViolations"
-                                                                 MaxHeight="170"
-                                                                 Background="#0F1217"
-                                                                 BorderBrush="#6D5330"
-                                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                                 Foreground="#EADCC3" />
-                                                    </GroupBox>
-                                                    <GroupBox Grid.Column="1" Header="Missing/Unresolved">
-                                                        <ListBox x:Name="ListExpertBaselineMissing"
-                                                                 MaxHeight="170"
-                                                                 Background="#0F1217"
-                                                                 BorderBrush="#6D5330"
-                                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                                 Foreground="#EADCC3" />
-                                                    </GroupBox>
-                                                </Grid>
-                                            </StackPanel>
-                                        </ScrollViewer>
-                                    </TabItem>
-                                 </TabControl>
                                  <Grid x:Name="GridLoadOrderFocusedHost"
                                        Grid.Row="1"
                                        Visibility="Collapsed">
                                     <GroupBox Header="Exact Slots">
-                                        <DataGrid x:Name="GridLoadOrderFocusedTable"
+                                        <DataGrid x:Name="GridLoadOrderTable"
                                                   AutoGenerateColumns="False"
                                                   IsReadOnly="True"
                                                   SelectionMode="Extended"
@@ -2193,7 +1866,6 @@
                                                   Background="#0F1217"
                                                   BorderBrush="#6D5330"
                                                   Foreground="#EADCC3"
-                                                  ItemsSource="{Binding ElementName=GridLoadOrder, Path=ItemsSource}"
                                                   ScrollViewer.CanContentScroll="True"
                                                   ScrollViewer.VerticalScrollBarVisibility="Auto"
                                                   ScrollViewer.HorizontalScrollBarVisibility="Auto"
@@ -2232,7 +1904,7 @@
                     </Grid>
                 </TabItem>
 
-                <TabItem x:Name="TabRuntimeForensics">
+                <TabItem x:Name="TabValidate">
                     <TabItem.Header>
                         <StackPanel Orientation="Horizontal">
                             <Viewbox Width="14" Height="14" Margin="0,0,6,0">
@@ -2251,7 +1923,6 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition x:Name="RowValidateIsolationEscalation" Height="Auto" />
                             <RowDefinition Height="Auto" />
-                            <RowDefinition x:Name="RowRuntimeActionPanel" Height="Auto" />
                             <RowDefinition x:Name="RowRuntimeWorkbench" Height="*" />
                         </Grid.RowDefinitions>
 
@@ -2259,7 +1930,6 @@
                                 Style="{StaticResource TabActionBarStyle}">
                             <Grid>
                                 <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
@@ -2499,79 +2169,6 @@
                                         </StackPanel>
                                     </StackPanel>
                                 </Border>
-                                <Grid x:Name="GridRuntimeMetrics"
-                                      Grid.Row="3"
-                                      Margin="0,10,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Border Grid.Column="0"
-                                            Margin="0,0,8,0"
-                                            Padding="10,8"
-                                            CornerRadius="8"
-                                            Background="#17342F"
-                                            BorderBrush="#3A7869"
-                                            BorderThickness="1">
-                                        <StackPanel>
-                                            <TextBlock Foreground="#C8F4E7" Text="Sessions" />
-                                            <TextBlock x:Name="TxtRuntimeMetricSessions"
-                                                       Margin="0,2,0,0"
-                                                       FontSize="20"
-                                                       FontWeight="Bold"
-                                                       Text="0" />
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="1"
-                                            Margin="0,0,8,0"
-                                            Padding="10,8"
-                                            CornerRadius="8"
-                                            Background="#332518"
-                                            BorderBrush="#8A6735"
-                                            BorderThickness="1">
-                                        <StackPanel>
-                                            <TextBlock Foreground="#F0DDB2" Text="Evidence Chains" />
-                                            <TextBlock x:Name="TxtRuntimeMetricChains"
-                                                       Margin="0,2,0,0"
-                                                       FontSize="20"
-                                                       FontWeight="Bold"
-                                                       Text="0" />
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="2"
-                                            Margin="0,0,8,0"
-                                            Padding="10,8"
-                                            CornerRadius="8"
-                                            Background="#241D18"
-                                            BorderBrush="#71552F"
-                                            BorderThickness="1">
-                                        <StackPanel>
-                                            <TextBlock Foreground="#E7D8BE" Text="Log Artifacts" />
-                                            <TextBlock x:Name="TxtRuntimeMetricLogs"
-                                                       Margin="0,2,0,0"
-                                                       FontSize="20"
-                                                       FontWeight="Bold"
-                                                       Text="0" />
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="3"
-                                            Padding="10,8"
-                                            CornerRadius="8"
-                                            Background="#433316"
-                                            BorderBrush="#7A6233"
-                                            BorderThickness="1">
-                                        <StackPanel>
-                                            <TextBlock Foreground="#FFE6B7" Text="Modules Touched" />
-                                            <TextBlock x:Name="TxtRuntimeMetricModules"
-                                                       Margin="0,2,0,0"
-                                                       FontSize="20"
-                                                       FontWeight="Bold"
-                                                       Text="0" />
-                                        </StackPanel>
-                                    </Border>
-                                </Grid>
                             </Grid>
                         </Border>
 
@@ -2610,40 +2207,8 @@
                              </Grid>
                          </Border>
 
-                        <Border x:Name="BorderRuntimeActionPanel"
-                                 Grid.Row="3"
-                                 Margin="0,0,0,8"
-                                 Padding="10"
-                                 CornerRadius="8"
-                                 Background="#171513"
-                                 BorderBrush="#70552E"
-                                 BorderThickness="1">
-                             <WrapPanel>
-                                 <Button x:Name="BtnClearRuntimeFilterAction"
-                                         Margin="0,0,10,10"
-                                         Style="{StaticResource ActionRowButtonStyle}"
-                                         Content="Clear Run Filter"
-                                         Click="BtnClearRuntimeForensicsFilter_Click" />
-                                <Button x:Name="BtnToggleLiveRuntimeWatch"
-                                        Margin="0,0,10,10"
-                                        Style="{StaticResource ActionRowButtonStyle}"
-                                        Content="Start Live Session Watch"
-                                        Click="BtnToggleLiveRuntimeWatch_Click" />
-                                <Button x:Name="BtnOpenRuntimeLogAction"
-                                        Margin="0,0,10,10"
-                                        Style="{StaticResource ActionRowButtonStyle}"
-                                        Content="Open Selected Log"
-                                        Click="BtnOpenSelectedRuntimeLog_Click" />
-                                <Button x:Name="BtnFocusRuntimeFindingAction"
-                                        Margin="0,0,0,10"
-                                        Style="{StaticResource ActionRowButtonStyle}"
-                                        Content="Focus Chain In Findings"
-                                        Click="BtnFocusRuntimeChainFinding_Click" />
-                                 </WrapPanel>
-                         </Border>
-
-                         <Border x:Name="BorderValidateRuntimeEmptyState"
-                                Grid.Row="4"
+                        <Border x:Name="BorderValidateRuntimeEmptyState"
+                                Grid.Row="3"
                                 Margin="0,0,0,8"
                                 Padding="12"
                                 CornerRadius="8"
@@ -2658,17 +2223,16 @@
                                            TextWrapping="Wrap" />
                                  <Button x:Name="BtnValidateRuntimeEmptyWatch"
                                          Width="220"
-                                        Margin="0,10,0,0"
-                                        HorizontalAlignment="Left"
-                                        Style="{StaticResource ActionRowButtonStyle}"
-                                        Content="{Binding ElementName=BtnToggleLiveRuntimeWatch, Path=Content}"
-                                        IsEnabled="{Binding ElementName=BtnToggleLiveRuntimeWatch, Path=IsEnabled}"
+                                         Margin="0,10,0,0"
+                                         HorizontalAlignment="Left"
+                                         Style="{StaticResource ActionRowButtonStyle}"
+                                         Content="Start Live Session Watch"
                                          Click="BtnToggleLiveRuntimeWatch_Click" />
-                             </StackPanel>
-                         </Border>
+                              </StackPanel>
+                          </Border>
 
                         <Border x:Name="BorderPlayerRuntimeWorkbench"
-                                Grid.Row="4"
+                                Grid.Row="3"
                                 Margin="0,0,0,8"
                                 Visibility="Collapsed">
                             <Grid>
@@ -2695,12 +2259,10 @@
                                                     Margin="0,0,10,0"
                                                     Style="{StaticResource ActionRowButtonStyle}"
                                                     Content="Clear Run Filter"
-                                                    IsEnabled="{Binding ElementName=BtnClearRuntimeFilterAction, Path=IsEnabled}"
                                                     Click="BtnClearRuntimeForensicsFilter_Click" />
                                             <Button x:Name="BtnPlayerRuntimeWatchLocal"
                                                     Style="{StaticResource ActionRowButtonStyle}"
-                                                    Content="{Binding ElementName=BtnToggleLiveRuntimeWatch, Path=Content}"
-                                                    IsEnabled="{Binding ElementName=BtnToggleLiveRuntimeWatch, Path=IsEnabled}"
+                                                    Content="Start Live Session Watch"
                                                     Click="BtnToggleLiveRuntimeWatch_Click" />
                                         </WrapPanel>
                                         <ListBox x:Name="ListPlayerRuntimeRuns"
@@ -2865,7 +2427,6 @@
                                                               SelectionChanged="GridPlayerRuntimeLogDetails_SelectionChanged"
                                                               MouseDoubleClick="GridRuntimeFocusedLogs_MouseDoubleClick"
                                                               PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                                              ItemsSource="{Binding ElementName=GridRuntimeLogs, Path=ItemsSource}"
                                                               Background="#0F1217"
                                                               BorderBrush="#6D5330"
                                                               Foreground="#EADCC3"
@@ -2898,7 +2459,6 @@
                                                               SelectionUnit="FullRow"
                                                               SelectionChanged="GridPlayerRuntimeModuleDetails_SelectionChanged"
                                                               PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                                              ItemsSource="{Binding ElementName=GridRuntimeModules, Path=ItemsSource}"
                                                               Background="#0F1217"
                                                               BorderBrush="#6D5330"
                                                               Foreground="#EADCC3"
@@ -2923,343 +2483,6 @@
                             </Grid>
                         </Border>
 
-                            <Grid x:Name="GridRuntimeWorkbench" Grid.Row="4">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition x:Name="ColRuntimeSessions" Width="320" MinWidth="280" />
-                                    <ColumnDefinition Width="10" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-
-                            <GroupBox Grid.Column="0" Header="Sessions">
-                                <Grid>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="*" />
-                                    </Grid.RowDefinitions>
-                                    <TextBlock x:Name="TxtRuntimeSessionHint"
-                                               Margin="0,0,0,8"
-                                               Foreground="#D3C1A2"
-                                               TextWrapping="Wrap"
-                                               Text="Select a recent session to narrow logs, modules, and evidence chains." />
-                                    <DataGrid Grid.Row="1"
-                                              x:Name="GridRuntimeSessions"
-                                              AutoGenerateColumns="False"
-                                              IsReadOnly="True"
-                                              SelectionMode="Extended"
-                                              SelectionUnit="FullRow"
-                                              SelectionChanged="GridRuntimeSessions_SelectionChanged"
-                                              PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                              MinRowHeight="40"
-                                              Background="#0F1217"
-                                              BorderBrush="#6D5330"
-                                              Foreground="#EADCC3"
-                                              ScrollViewer.CanContentScroll="True"
-                                              ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                              RowBackground="#111419"
-                                              AlternatingRowBackground="#181C22"
-                                              GridLinesVisibility="Horizontal"
-                                              HeadersVisibility="Column">
-                                        <DataGrid.Columns>
-                                            <DataGridTextColumn Header="Session" Binding="{Binding SessionLabel}" Width="95" />
-                                            <DataGridTextColumn Header="Latest (UTC)" Binding="{Binding LastLogUtc}" Width="150" />
-                                            <DataGridTextColumn Header="Chains" Binding="{Binding ChainCount}" Width="60" />
-                                            <DataGridTextColumn Header="Mods" Binding="{Binding ModuleCount}" Width="55" />
-                                            <DataGridTextColumn Header="Risk" Binding="{Binding MaxRisk}" Width="70" />
-                                            <DataGridTextColumn Header="State" Binding="{Binding StateLabel}" Width="80" />
-                                        </DataGrid.Columns>
-                                    </DataGrid>
-                                </Grid>
-                            </GroupBox>
-
-                            <GridSplitter Grid.Column="1"
-                                          Width="10"
-                                          HorizontalAlignment="Stretch"
-                                          Background="#3A2A1C"
-                                          ShowsPreview="True"
-                                          ResizeBehavior="PreviousAndNext"
-                                          ResizeDirection="Columns" />
-
-                            <Grid Grid.Column="2">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" />
-                                </Grid.RowDefinitions>
-                                <Border x:Name="BorderRuntimeFocusSummary"
-                                        Grid.Row="0"
-                                        Margin="0,0,0,8"
-                                        Padding="10,8"
-                                        CornerRadius="8"
-                                        Background="#1B1714"
-                                        BorderBrush="#7A5D34"
-                                        BorderThickness="1">
-                                    <TextBlock x:Name="TxtRuntimeFocusSummary"
-                                               Foreground="#E2D1B6"
-                                               TextWrapping="Wrap"
-                                               Text="Start with a recent session, then use Evidence Chains to inspect the highest-risk runtime path." />
-                                </Border>
-
-                                <TabControl Grid.Row="1"
-                                            x:Name="RuntimeDetailsTabs"
-                                            BorderBrush="#6C522C"
-                                            Background="#0F0F11"
-                                            Foreground="#F1E2C6">
-                                    <TabItem x:Name="TabRuntimeChains" Header="Evidence Chains">
-                                        <DataGrid x:Name="GridRuntimeChains"
-                                                  AutoGenerateColumns="False"
-                                                  IsReadOnly="True"
-                                                  SelectionMode="Extended"
-                                                  SelectionUnit="FullRow"
-                                                  SelectionChanged="GridRuntimeChains_SelectionChanged"
-                                                  MouseDoubleClick="GridRuntimeChains_MouseDoubleClick"
-                                                  PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                                  MinRowHeight="40"
-                                                  FrozenColumnCount="1"
-                                                  Background="#0F1217"
-                                                  BorderBrush="#6D5330"
-                                                  Foreground="#EADCC3"
-                                                  ScrollViewer.CanContentScroll="True"
-                                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                                  RowBackground="#111419"
-                                                  AlternatingRowBackground="#181C22"
-                                                  GridLinesVisibility="Horizontal"
-                                                  HeadersVisibility="Column">
-                                            <DataGrid.Columns>
-                                                <DataGridTextColumn Header="Risk" Binding="{Binding Risk}" Width="70" />
-                                                <DataGridTextColumn Header="What Happened" Binding="{Binding Finding}" Width="220" />
-                                                <DataGridTextColumn Header="Mods" Binding="{Binding Modules}" Width="220" />
-                                                <DataGridTextColumn Header="Log File" Binding="{Binding LogFile}" Width="160" />
-                                                <DataGridTextColumn Header="How Sure" Binding="{Binding Confidence}" Width="90" />
-                                                <DataGridTextColumn Header="Why It's Linked" Binding="{Binding Signal}" Width="2*" />
-                                            </DataGrid.Columns>
-                                        </DataGrid>
-                                    </TabItem>
-
-                                    <TabItem x:Name="TabRuntimeLogs" Header="Log Artifacts">
-                                        <DataGrid x:Name="GridRuntimeLogs"
-                                                  AutoGenerateColumns="False"
-                                                  IsReadOnly="True"
-                                                  SelectionMode="Extended"
-                                                  SelectionUnit="FullRow"
-                                                  SelectionChanged="GridRuntimeLogs_SelectionChanged"
-                                                  MouseDoubleClick="GridRuntimeLogs_MouseDoubleClick"
-                                                  PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                                  MinRowHeight="40"
-                                                  Background="#0F1217"
-                                                  BorderBrush="#6D5330"
-                                                  Foreground="#EADCC3"
-                                                  ScrollViewer.CanContentScroll="True"
-                                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                                  RowBackground="#111419"
-                                                  AlternatingRowBackground="#181C22"
-                                                  GridLinesVisibility="Horizontal"
-                                                  HeadersVisibility="Column">
-                                            <DataGrid.Columns>
-                                                <DataGridTextColumn Header="Signal" Binding="{Binding SignalType}" Width="120" />
-                                                <DataGridTextColumn Header="Log File" Binding="{Binding FileName}" Width="*" />
-                                                <DataGridTextColumn Header="Findings" Binding="{Binding FindingHits}" Width="80" />
-                                            </DataGrid.Columns>
-                                        </DataGrid>
-                                    </TabItem>
-
-                                    <TabItem x:Name="TabRuntimeModules" Header="Correlated Modules">
-                                        <DataGrid x:Name="GridRuntimeModules"
-                                                  AutoGenerateColumns="False"
-                                                  IsReadOnly="True"
-                                                  SelectionMode="Extended"
-                                                  SelectionUnit="FullRow"
-                                                  SelectionChanged="GridRuntimeModules_SelectionChanged"
-                                                  PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                                  MinRowHeight="40"
-                                                  Background="#0F1217"
-                                                  BorderBrush="#6D5330"
-                                                  Foreground="#EADCC3"
-                                                  ScrollViewer.CanContentScroll="True"
-                                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                                  RowBackground="#111419"
-                                                  AlternatingRowBackground="#181C22"
-                                                  GridLinesVisibility="Horizontal"
-                                                  HeadersVisibility="Column">
-                                            <DataGrid.Columns>
-                                                <DataGridTextColumn Header="Module" Binding="{Binding ModuleId}" Width="*" />
-                                                <DataGridTextColumn Header="Findings" Binding="{Binding CorrelatedFindings}" Width="80" />
-                                                <DataGridTextColumn Header="Sessions" Binding="{Binding SessionCoverage}" Width="80" />
-                                                <DataGridTextColumn Header="Max Risk" Binding="{Binding MaxRisk}" Width="85" />
-                                                <DataGridTextColumn Header="Top Categories" Binding="{Binding TopCategories}" Width="1.4*" />
-                                            </DataGrid.Columns>
-                                        </DataGrid>
-                                    </TabItem>
-                                </TabControl>
-                                <GroupBox x:Name="GridRuntimeFocusedHost"
-                                          Grid.Row="1"
-                                          Header="Runtime Drawer"
-                                          Visibility="Collapsed">
-                                    <Grid>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="*" />
-                                        </Grid.RowDefinitions>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="*" />
-                                            </Grid.ColumnDefinitions>
-                                            <Button x:Name="BtnRuntimeDrawerChains"
-                                                    Grid.Column="0"
-                                                    MinWidth="170"
-                                                    Style="{StaticResource ActionRowButtonStyle}"
-                                                    Content="Evidence Chains"
-                                                    Click="BtnRuntimeDrawerChains_Click" />
-                                            <Button x:Name="BtnRuntimeDrawerLogs"
-                                                    Grid.Column="1"
-                                                    MinWidth="170"
-                                                    Style="{StaticResource ActionRowButtonStyle}"
-                                                    Content="Log Artifacts"
-                                                    Click="BtnRuntimeDrawerLogs_Click" />
-                                            <Button x:Name="BtnRuntimeDrawerModules"
-                                                    Grid.Column="2"
-                                                    Margin="0"
-                                                    MinWidth="170"
-                                                    Style="{StaticResource ActionRowButtonStyle}"
-                                                    Content="Correlated Modules"
-                                                    Click="BtnRuntimeDrawerModules_Click" />
-                                        </Grid>
-                                        <TextBlock x:Name="TxtRuntimeDrawerHint"
-                                                   Grid.Row="1"
-                                                   Margin="0,8,0,8"
-                                                   Foreground="#D9C8AB"
-                                                   TextWrapping="Wrap"
-                                                   Text="Evidence Chains ranks runtime-linked findings. Switch the drawer to logs or modules only when you need that supporting evidence." />
-                                        <Border Grid.Row="2"
-                                                Margin="0,0,0,8"
-                                                Padding="10,8"
-                                                CornerRadius="8"
-                                                Background="#191714"
-                                                BorderBrush="#70552E"
-                                                BorderThickness="1">
-                                            <StackPanel>
-                                                <TextBlock x:Name="TxtRuntimeDrawerSelectionTitle"
-                                                           FontWeight="SemiBold"
-                                                           Foreground="#F1E2C6"
-                                                           Text="No runtime drawer row selected." />
-                                                <TextBlock x:Name="TxtRuntimeDrawerSelectionBody"
-                                                           Margin="0,4,0,0"
-                                                           Foreground="#D9C8AB"
-                                                           TextWrapping="Wrap"
-                                                           Text="Select a row to see the exact chain/log/module context before you open the log or jump back to Findings." />
-                                                <WrapPanel x:Name="PanelRuntimeDrawerSelectionActions"
-                                                           Margin="0,8,0,0"
-                                                           Visibility="Collapsed">
-                                                    <Button x:Name="BtnOpenRuntimeLogDrawerAction"
-                                                            Margin="0,0,10,0"
-                                                            Style="{StaticResource ActionRowButtonStyle}"
-                                                            Content="Open Selected Log"
-                                                            IsEnabled="{Binding ElementName=BtnOpenRuntimeLogAction, Path=IsEnabled}"
-                                                            Click="BtnOpenSelectedRuntimeLog_Click" />
-                                                    <Button x:Name="BtnFocusRuntimeFindingDrawerAction"
-                                                            Style="{StaticResource ActionRowButtonStyle}"
-                                                            Content="Focus Chain In Findings"
-                                                            IsEnabled="{Binding ElementName=BtnFocusRuntimeFindingAction, Path=IsEnabled}"
-                                                            Click="BtnFocusRuntimeChainFinding_Click" />
-                                                </WrapPanel>
-                                            </StackPanel>
-                                        </Border>
-                                        <Grid Grid.Row="3">
-                                            <DataGrid x:Name="GridRuntimeFocusedChains"
-                                                      AutoGenerateColumns="False"
-                                                      IsReadOnly="True"
-                                                      SelectionMode="Extended"
-                                                      SelectionUnit="FullRow"
-                                                      SelectionChanged="GridRuntimeFocusedChains_SelectionChanged"
-                                                      MouseDoubleClick="GridRuntimeFocusedChains_MouseDoubleClick"
-                                                      PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                                      MinRowHeight="46"
-                                                      FrozenColumnCount="1"
-                                                      Background="#0F1217"
-                                                      BorderBrush="#6D5330"
-                                                      Foreground="#EADCC3"
-                                                      ItemsSource="{Binding ElementName=GridRuntimeChains, Path=ItemsSource}"
-                                                      ScrollViewer.CanContentScroll="True"
-                                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                                      RowBackground="#111419"
-                                                      AlternatingRowBackground="#181C22"
-                                                      GridLinesVisibility="Horizontal"
-                                                      HeadersVisibility="Column">
-                                                <DataGrid.Columns>
-                                                    <DataGridTextColumn Header="Risk" Binding="{Binding Risk}" Width="70" />
-                                                    <DataGridTextColumn Header="What Happened" Binding="{Binding Finding}" Width="220" />
-                                                    <DataGridTextColumn Header="Mods" Binding="{Binding Modules}" Width="220" />
-                                                    <DataGridTextColumn Header="Log File" Binding="{Binding LogFile}" Width="160" />
-                                                    <DataGridTextColumn Header="How Sure" Binding="{Binding Confidence}" Width="90" />
-                                                    <DataGridTextColumn Header="Why It's Linked" Binding="{Binding Signal}" Width="2*" />
-                                                </DataGrid.Columns>
-                                            </DataGrid>
-                                            <DataGrid x:Name="GridRuntimeFocusedLogs"
-                                                      AutoGenerateColumns="False"
-                                                      IsReadOnly="True"
-                                                      SelectionMode="Extended"
-                                                      SelectionUnit="FullRow"
-                                                      SelectionChanged="GridRuntimeFocusedLogs_SelectionChanged"
-                                                      MouseDoubleClick="GridRuntimeFocusedLogs_MouseDoubleClick"
-                                                      PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                                      MinRowHeight="46"
-                                                      Visibility="Collapsed"
-                                                      Background="#0F1217"
-                                                      BorderBrush="#6D5330"
-                                                      Foreground="#EADCC3"
-                                                      ItemsSource="{Binding ElementName=GridRuntimeLogs, Path=ItemsSource}"
-                                                      ScrollViewer.CanContentScroll="True"
-                                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                                      RowBackground="#111419"
-                                                      AlternatingRowBackground="#181C22"
-                                                      GridLinesVisibility="Horizontal"
-                                                      HeadersVisibility="Column">
-                                                <DataGrid.Columns>
-                                                    <DataGridTextColumn Header="Signal" Binding="{Binding SignalType}" Width="120" />
-                                                    <DataGridTextColumn Header="Log File" Binding="{Binding FileName}" Width="*" />
-                                                    <DataGridTextColumn Header="Findings" Binding="{Binding FindingHits}" Width="80" />
-                                                </DataGrid.Columns>
-                                            </DataGrid>
-                                            <DataGrid x:Name="GridRuntimeFocusedModules"
-                                                      AutoGenerateColumns="False"
-                                                      IsReadOnly="True"
-                                                      SelectionMode="Extended"
-                                                      SelectionUnit="FullRow"
-                                                      SelectionChanged="GridRuntimeFocusedModules_SelectionChanged"
-                                                      PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                                      MinRowHeight="46"
-                                                      Visibility="Collapsed"
-                                                      Background="#0F1217"
-                                                      BorderBrush="#6D5330"
-                                                      Foreground="#EADCC3"
-                                                      ItemsSource="{Binding ElementName=GridRuntimeModules, Path=ItemsSource}"
-                                                      ScrollViewer.CanContentScroll="True"
-                                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                                      RowBackground="#111419"
-                                                      AlternatingRowBackground="#181C22"
-                                                      GridLinesVisibility="Horizontal"
-                                                      HeadersVisibility="Column">
-                                                <DataGrid.Columns>
-                                                    <DataGridTextColumn Header="Module" Binding="{Binding ModuleId}" Width="*" />
-                                                    <DataGridTextColumn Header="Findings" Binding="{Binding CorrelatedFindings}" Width="80" />
-                                                    <DataGridTextColumn Header="Sessions" Binding="{Binding SessionCoverage}" Width="80" />
-                                                    <DataGridTextColumn Header="Max Risk" Binding="{Binding MaxRisk}" Width="85" />
-                                                    <DataGridTextColumn Header="Top Categories" Binding="{Binding TopCategories}" Width="1.4*" />
-                                                </DataGrid.Columns>
-                                            </DataGrid>
-                                        </Grid>
-                                    </Grid>
-                                </GroupBox>
-                            </Grid>
                         <GroupBox x:Name="GroupValidateIsolationEscalation"
                                   Grid.Row="1"
                                   Margin="0,8,0,0"
@@ -3277,15 +2500,16 @@
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="*" />
                                         </Grid.RowDefinitions>
-                                        <TextBlock Margin="0,0,0,8"
+                                        <TextBlock x:Name="TxtIsolationCandidatesCount"
+                                                   Margin="0,0,0,8"
                                                    Foreground="#D8C7AA"
-                                                   Text="{Binding ElementName=TxtIsolationCandidatesCount, Path=Text}"
+                                                   Text="0 suspect modules"
                                                    TextWrapping="Wrap" />
-                                        <ListBox Grid.Row="1"
+                                        <ListBox x:Name="ListIsolationCandidates"
+                                                 Grid.Row="1"
                                                  Background="#0F1217"
                                                  BorderBrush="#6D5330"
-                                                 Foreground="#EADCC3"
-                                                 ItemsSource="{Binding ElementName=ListIsolationCandidates, Path=ItemsSource}" />
+                                                 Foreground="#EADCC3" />
                                     </Grid>
                                 </GroupBox>
 
@@ -3310,8 +2534,9 @@
                                             BorderBrush="#6F5530"
                                             BorderThickness="1">
                                         <StackPanel>
-                                            <TextBlock Foreground="#E2D1B6"
-                                                       Text="{Binding ElementName=TxtIsolationFocusSummary, Path=Text}"
+                                            <TextBlock x:Name="TxtIsolationFocusSummary"
+                                                       Foreground="#E2D1B6"
+                                                       Text="Validation and isolation keep official foundations active while you test only player-controlled suspect mods."
                                                        TextWrapping="Wrap" />
                                             <Grid Margin="0,10,0,0">
                                                 <Grid.ColumnDefinitions>
@@ -3327,12 +2552,14 @@
                                                         BorderBrush="#7A6135"
                                                         BorderThickness="1">
                                                     <StackPanel>
-                                                        <TextBlock Foreground="#F0DDB2"
+                                                        <TextBlock x:Name="TxtIsolationDisableHeader"
+                                                                   Foreground="#F0DDB2"
                                                                    FontWeight="SemiBold"
-                                                                   Text="{Binding ElementName=TxtIsolationDisableHeader, Path=Text}" />
-                                                        <TextBlock Margin="0,4,0,0"
+                                                                   Text="Turn Off This Cohort" />
+                                                        <TextBlock x:Name="TxtIsolationCurrentDisableSet"
+                                                                   Margin="0,4,0,0"
                                                                    Foreground="#F3E5C8"
-                                                                   Text="{Binding ElementName=TxtIsolationCurrentDisableSet, Path=Text}"
+                                                                   Text="-"
                                                                    TextWrapping="Wrap" />
                                                     </StackPanel>
                                                 </Border>
@@ -3344,12 +2571,14 @@
                                                         BorderBrush="#5E7658"
                                                         BorderThickness="1">
                                                     <StackPanel>
-                                                        <TextBlock Foreground="#D9E4D0"
+                                                        <TextBlock x:Name="TxtIsolationFoundationHeader"
+                                                                   Foreground="#D9E4D0"
                                                                    FontWeight="SemiBold"
-                                                                   Text="{Binding ElementName=TxtIsolationFoundationHeader, Path=Text}" />
-                                                        <TextBlock Margin="0,4,0,0"
+                                                                   Text="Keep Foundations Active" />
+                                                        <TextBlock x:Name="TxtIsolationCurrentFoundationSet"
+                                                                   Margin="0,4,0,0"
                                                                    Foreground="#E2F0DD"
-                                                                   Text="{Binding ElementName=TxtIsolationCurrentFoundationSet, Path=Text}"
+                                                                   Text="No locked foundations."
                                                                    TextWrapping="Wrap" />
                                                     </StackPanel>
                                                 </Border>
@@ -3360,258 +2589,24 @@
                                                         BorderBrush="#5D6882"
                                                         BorderThickness="1">
                                                     <StackPanel>
-                                                        <TextBlock Foreground="#D7E2F0"
+                                                        <TextBlock x:Name="TxtIsolationKeepHeader"
+                                                                   Foreground="#D7E2F0"
                                                                    FontWeight="SemiBold"
-                                                                   Text="{Binding ElementName=TxtIsolationKeepHeader, Path=Text}" />
-                                                        <TextBlock Margin="0,4,0,0"
+                                                                   Text="Other Suspects Stay On" />
+                                                        <TextBlock x:Name="TxtIsolationCurrentKeepSet"
+                                                                   Margin="0,4,0,0"
                                                                    Foreground="#E6EEF9"
-                                                                   Text="{Binding ElementName=TxtIsolationCurrentKeepSet, Path=Text}"
+                                                                   Text="-"
                                                                    TextWrapping="Wrap" />
                                                     </StackPanel>
                                                 </Border>
                                             </Grid>
-                                            <TextBlock Margin="0,10,0,0"
+                                            <TextBlock x:Name="TxtIsolationNextAction"
+                                                       Margin="0,10,0,0"
                                                        Foreground="#E8D9C0"
-                                                       Text="{Binding ElementName=TxtIsolationNextAction, Path=Text}"
+                                                       Text="No active isolation step. Build a plan from findings first."
                                                        TextWrapping="Wrap" />
                                             <Grid Margin="0,10,0,0">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
-                                                <Button Grid.Column="0"
-                                                        Style="{StaticResource ActionRowButtonStyle}"
-                                                        Content="{Binding ElementName=BtnIsolationIssueGone, Path=Content}"
-                                                        IsEnabled="{Binding ElementName=BtnIsolationIssueGone, Path=IsEnabled}"
-                                                        Click="BtnIsolationIssueGone_Click" />
-                                                <Button Grid.Column="1"
-                                                        Margin="0"
-                                                        Style="{StaticResource ActionRowButtonStyle}"
-                                                        Content="{Binding ElementName=BtnIsolationIssuePersists, Path=Content}"
-                                                        IsEnabled="{Binding ElementName=BtnIsolationIssuePersists, Path=IsEnabled}"
-                                                        Click="BtnIsolationIssuePersists_Click" />
-                                            </Grid>
-                                        </StackPanel>
-                                    </Border>
-                                    <DataGrid Grid.Row="1"
-                                              AutoGenerateColumns="False"
-                                              IsReadOnly="True"
-                                              SelectionMode="Extended"
-                                              SelectionUnit="FullRow"
-                                              PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                              MinRowHeight="42"
-                                              Background="#0F1217"
-                                              BorderBrush="#6D5330"
-                                              Foreground="#EADCC3"
-                                              ItemsSource="{Binding ElementName=GridIsolationSteps, Path=ItemsSource}"
-                                              ScrollViewer.CanContentScroll="True"
-                                              ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                              RowBackground="#111419"
-                                              AlternatingRowBackground="#181C22"
-                                              GridLinesVisibility="Horizontal"
-                                              HeadersVisibility="Column">
-                                        <DataGrid.Columns>
-                                            <DataGridTextColumn Header="#" Binding="{Binding Step}" Width="48" />
-                                            <DataGridTextColumn Header="Turn Off" Binding="{Binding DisableSet}" Width="1.6*" />
-                                            <DataGridTextColumn Header="Foundations Kept" Binding="{Binding FoundationSet}" Width="1.2*" />
-                                            <DataGridTextColumn Header="Other Suspects On" Binding="{Binding KeepSet}" Width="1.4*" />
-                                            <DataGridTextColumn Header="Outcome" Binding="{Binding Outcome}" Width="130" />
-                                            <DataGridTextColumn Header="Remaining" Binding="{Binding RemainingAfter}" Width="90" />
-                                        </DataGrid.Columns>
-                                    </DataGrid>
-                                </Grid>
-                            </Grid>
-                        </GroupBox>
-                        </Grid>
-                    </Grid>
-                </TabItem>
-
-                <TabItem x:Name="TabIsolationLab">
-                    <TabItem.Header>
-                        <StackPanel Orientation="Horizontal">
-                            <Viewbox Width="14" Height="14" Margin="0,0,6,0">
-                                <Canvas Width="16" Height="16">
-                                    <Path Stroke="#F3E5C8" StrokeThickness="1.5" StrokeLineJoin="Round" Data="M3,3 L8,8 L3,13" />
-                                    <Path Stroke="#C89A56" StrokeThickness="1.5" StrokeLineJoin="Round" Data="M13,3 L8,8 L13,13" />
-                                    <Ellipse Width="2.5" Height="2.5" Fill="#F3E5C8" Canvas.Left="6.75" Canvas.Top="6.75" />
-                                </Canvas>
-                            </Viewbox>
-                            <TextBlock VerticalAlignment="Center" Text="Isolation Lab" />
-                        </StackPanel>
-                    </TabItem.Header>
-                    <Grid Margin="10">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-
-                        <Border Grid.Row="0"
-                                Style="{StaticResource TabActionBarStyle}">
-                            <StackPanel>
-                                <Border Style="{StaticResource SectionBannerBorderStyle}">
-                                    <TextBlock Style="{StaticResource SectionBannerTextStyle}"
-                                               Text="Isolation Lab (Player-Cohort Testing)" />
-                                </Border>
-                                <TextBlock x:Name="TxtIsolationSummary"
-                                           Margin="0,6,0,0"
-                                           Style="{StaticResource TabSectionHintStyle}"
-                                           Text="Build an isolation plan from a selected finding." />
-                                <Grid Margin="0,8,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="0.7*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Button x:Name="BtnStartIsolationFromSelectedFinding"
-                                            Grid.Column="0"
-                                            Style="{StaticResource ActionRowButtonStyle}"
-                                            Content="Build Plan From Selected Finding"
-                                            Click="BtnStartIsolationFromSelectedFinding_Click" />
-                                    <Button x:Name="BtnStartIsolationFromTopRuntime"
-                                            Grid.Column="1"
-                                            Style="{StaticResource ActionRowButtonStyle}"
-                                            Content="Build Plan From Top Runtime Cluster"
-                                            Click="BtnStartIsolationFromTopRuntime_Click" />
-                                    <Button x:Name="BtnResetIsolation"
-                                            Grid.Column="2"
-                                            Margin="0"
-                                            Style="{StaticResource ActionRowButtonStyle}"
-                                            Content="Reset"
-                                            Click="BtnResetIsolation_Click" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
-                        <Grid Grid.Row="1"
-                              Margin="0,8,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="300" />
-                                <ColumnDefinition Width="10" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-
-                            <GroupBox Grid.Column="0" Header="Suspect Rail">
-                                <Grid>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="*" />
-                                    </Grid.RowDefinitions>
-                                    <TextBlock Margin="0,0,0,8"
-                                               Foreground="#D8C7AA"
-                                               TextWrapping="Wrap"
-                                               Text="Only player-controlled suspect mods appear here. Frameworks and official foundations stay active and are not part of the disable cohort." />
-                                    <TextBlock Grid.Row="1"
-                                               x:Name="TxtIsolationCandidatesCount"
-                                               Margin="0,0,0,8"
-                                               Foreground="#E2D1B6"
-                                               Text="0 suspect modules" />
-                                    <ListBox Grid.Row="2"
-                                             x:Name="ListIsolationCandidates"
-                                             Background="#0F1217"
-                                             BorderBrush="#6D5330"
-                                             Foreground="#EADCC3" />
-                                </Grid>
-                            </GroupBox>
-
-                            <GridSplitter Grid.Column="1"
-                                          Width="10"
-                                          HorizontalAlignment="Stretch"
-                                          Background="#3A2A1C"
-                                          ShowsPreview="True"
-                                          ResizeBehavior="PreviousAndNext"
-                                          ResizeDirection="Columns" />
-
-                            <Grid Grid.Column="2">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" />
-                                </Grid.RowDefinitions>
-                                <Border Grid.Row="0"
-                                        Margin="0,0,0,8"
-                                        Padding="10"
-                                        CornerRadius="8"
-                                        Background="#16181C"
-                                        BorderBrush="#6F5530"
-                                        BorderThickness="1">
-                                    <Grid>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
-                                        <TextBlock x:Name="TxtIsolationFocusSummary"
-                                                   Foreground="#E2D1B6"
-                                                   TextWrapping="Wrap"
-                                                   Text="Isolation Lab tests player-controlled suspect cohorts while keeping frameworks and official foundations active." />
-                                        <Grid Grid.Row="1"
-                                              Margin="0,10,0,0">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="1.05*" />
-                                                <ColumnDefinition Width="0.95*" />
-                                                <ColumnDefinition Width="1.05*" />
-                                            </Grid.ColumnDefinitions>
-                                            <Border Grid.Column="0"
-                                                    Margin="0,0,8,0"
-                                                    Padding="10,8"
-                                                    CornerRadius="8"
-                                                    Background="#2A2018"
-                                                    BorderBrush="#7A6135"
-                                                    BorderThickness="1">
-                                                <StackPanel>
-                                                    <TextBlock x:Name="TxtIsolationDisableHeader" Foreground="#F0DDB2" FontWeight="SemiBold" Text="Turn Off This Cohort" />
-                                                    <TextBlock x:Name="TxtIsolationCurrentDisableSet"
-                                                               Margin="0,4,0,0"
-                                                               Foreground="#F3E5C8"
-                                                               TextWrapping="Wrap"
-                                                               Text="-" />
-                                                </StackPanel>
-                                            </Border>
-                                            <Border Grid.Column="1"
-                                                    Margin="0,0,8,0"
-                                                    Padding="10,8"
-                                                    CornerRadius="8"
-                                                    Background="#1D241C"
-                                                    BorderBrush="#5E7658"
-                                                    BorderThickness="1">
-                                                <StackPanel>
-                                                    <TextBlock x:Name="TxtIsolationFoundationHeader" Foreground="#D9E4D0" FontWeight="SemiBold" Text="Keep Foundations Active" />
-                                                    <TextBlock x:Name="TxtIsolationCurrentFoundationSet"
-                                                               Margin="0,4,0,0"
-                                                               Foreground="#E2F0DD"
-                                                               TextWrapping="Wrap"
-                                                               Text="No locked foundations." />
-                                                </StackPanel>
-                                            </Border>
-                                            <Border Grid.Column="2"
-                                                    Padding="10,8"
-                                                    CornerRadius="8"
-                                                    Background="#1D2026"
-                                                    BorderBrush="#5D6882"
-                                                    BorderThickness="1">
-                                                <StackPanel>
-                                                    <TextBlock x:Name="TxtIsolationKeepHeader" Foreground="#D7E2F0" FontWeight="SemiBold" Text="Other Suspects Stay On" />
-                                                    <TextBlock x:Name="TxtIsolationCurrentKeepSet"
-                                                               Margin="0,4,0,0"
-                                                               Foreground="#E6EEF9"
-                                                               TextWrapping="Wrap"
-                                                               Text="-" />
-                                                </StackPanel>
-                                            </Border>
-                                        </Grid>
-                                        <Grid Grid.Row="2"
-                                              Margin="0,10,0,0">
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="Auto" />
-                                            </Grid.RowDefinitions>
-                                            <TextBlock x:Name="TxtIsolationNextAction"
-                                                       Foreground="#E8D9C0"
-                                                       TextWrapping="Wrap"
-                                                       Text="No active isolation step. Build a plan from findings first." />
-                                            <Grid Grid.Row="1"
-                                                  Margin="0,10,0,0">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="*" />
@@ -3628,12 +2623,10 @@
                                                         Content="Issue Persists"
                                                         Click="BtnIsolationIssuePersists_Click" />
                                             </Grid>
-                                        </Grid>
-                                    </Grid>
-                                </Border>
-
-                                    <GroupBox Grid.Row="1" Header="What You've Tried">
+                                        </StackPanel>
+                                    </Border>
                                     <DataGrid x:Name="GridIsolationSteps"
+                                              Grid.Row="1"
                                               AutoGenerateColumns="False"
                                               IsReadOnly="True"
                                               SelectionMode="Extended"
@@ -3659,100 +2652,10 @@
                                             <DataGridTextColumn Header="Remaining" Binding="{Binding RemainingAfter}" Width="90" />
                                         </DataGrid.Columns>
                                     </DataGrid>
-                                </GroupBox>
-                            </Grid>
-                        </Grid>
-                    </Grid>
-                </TabItem>
-
-                <TabItem x:Name="TabWarnings">
-                    <TabItem.Header>
-                        <StackPanel Orientation="Horizontal">
-                            <Viewbox Width="14" Height="14" Margin="0,0,6,0">
-                                <Canvas Width="16" Height="16">
-                                    <Path Fill="#5A201B" Stroke="#C89A56" StrokeThickness="1" Data="M8,1 L15,14 L1,14 Z" />
-                                    <Rectangle Width="1.8" Height="6" Fill="#F8E9CC" RadiusX="0.9" RadiusY="0.9" Canvas.Left="7.1" Canvas.Top="5" />
-                                    <Ellipse Width="1.8" Height="1.8" Fill="#F8E9CC" Canvas.Left="7.1" Canvas.Top="12" />
-                                </Canvas>
-                            </Viewbox>
-                            <TextBlock VerticalAlignment="Center" Text="Warnings &amp; Save Insights" />
-                        </StackPanel>
-                    </TabItem.Header>
-                    <Grid Margin="10">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-
-                        <TextBlock Grid.Row="0"
-                                   Margin="0,0,0,8"
-                                   Style="{StaticResource TabSectionHintStyle}"
-                                   Text="Warnings are not always errors. They indicate uncertain metadata, skipped files, or environment limitations." />
-
-                        <Border Grid.Row="1"
-                                Style="{StaticResource TabActionBarStyle}">
-                            <StackPanel>
-                                <TextBlock VerticalAlignment="Center"
-                                           Style="{StaticResource TabSectionHintStyle}"
-                                           Text="Re-scan after path/config changes, then validate runtime if warnings mention log/session evidence." />
-                                <Grid Margin="0,8,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="1.45*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Button Grid.Column="0"
-                                            Style="{StaticResource ActionRowButtonStyle}"
-                                            Content="Run Scan"
-                                            Click="BtnRunScan_Click" />
-                                    <Button Grid.Column="1"
-                                            Style="{StaticResource ActionRowButtonStyle}"
-                                            Content="Collect Runtime Evidence"
-                                            Click="BtnCollectRuntimeEvidence_Click" />
-                                    <Button Grid.Column="2"
-                                            Margin="0"
-                                            Style="{StaticResource ActionRowButtonStyle}"
-                                            Content="Go Findings"
-                                            Click="BtnWorkflowGoFindings_Click" />
                                 </Grid>
-                            </StackPanel>
-                        </Border>
-
-                        <GroupBox Grid.Row="2" Header="Warnings" Margin="0,0,0,8">
-                            <ListBox x:Name="ListWarnings"
-                                     Background="#0F1217"
-                                     BorderBrush="#6D5330"
-                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                     Foreground="#EADCC3" />
+                            </Grid>
                         </GroupBox>
-
-                        <GroupBox Grid.Row="3" Header="Save Insights">
-                            <DataGrid x:Name="GridSaves"
-                                      AutoGenerateColumns="False"
-                                      IsReadOnly="True"
-                                      SelectionMode="Extended"
-                                      SelectionUnit="FullRow"
-                                      PreviewKeyDown="DataGrid_PreviewKeyDown"
-                                      Background="#0F1217"
-                                      BorderBrush="#6D5330"
-                                      Foreground="#EADCC3"
-                                      ScrollViewer.CanContentScroll="True"
-                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                      RowBackground="#111419"
-                                      AlternatingRowBackground="#181C22"
-                                      GridLinesVisibility="Horizontal"
-                                      HeadersVisibility="Column">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Save" Binding="{Binding SaveName}" Width="*" />
-                                    <DataGridTextColumn Header="Size (MB)" Binding="{Binding SizeMb}" Width="100" />
-                                    <DataGridTextColumn Header="Referenced Installed Mods" Binding="{Binding ReferencedCount}" Width="160" />
-                                </DataGrid.Columns>
-                            </DataGrid>
-                        </GroupBox>
-                    </Grid>
+                        </Grid>
                 </TabItem>
                 </TabControl>
             </Grid>
@@ -3819,3 +2722,4 @@
         </Border>
     </Grid>
 </Window>
+

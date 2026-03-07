@@ -25,9 +25,6 @@ public partial class MainWindow : Window
     private readonly List<LoadOrderRow> _allLoadOrderRows = [];
     private readonly ObservableCollection<string> _loadOrderMoveRows = [];
     private readonly ObservableCollection<string> _loadOrderInactiveRows = [];
-    private readonly ObservableCollection<string> _loadOrderBasisRows = [];
-    private readonly ObservableCollection<SaveInsightRow> _saveRows = [];
-    private readonly ObservableCollection<string> _warningRows = [];
     private readonly ObservableCollection<RuntimeSessionRow> _runtimeSessionRows = [];
     private readonly ObservableCollection<RuntimeLogRow> _runtimeLogRows = [];
     private readonly ObservableCollection<RuntimeModuleRow> _runtimeModuleRows = [];
@@ -39,15 +36,10 @@ public partial class MainWindow : Window
     private readonly List<RuntimeModuleRow> _allRuntimeModuleRows = [];
     private readonly List<RuntimeChainRow> _allRuntimeChainRows = [];
     private readonly ObservableCollection<string> _nextStepRows = [];
-    private readonly ObservableCollection<string> _diffNewRows = [];
-    private readonly ObservableCollection<string> _diffResolvedRows = [];
-    private readonly ObservableCollection<string> _diffSeverityRows = [];
     private readonly ObservableCollection<string> _isolationCandidateRows = [];
     private readonly ObservableCollection<IsolationStepRow> _isolationStepRows = [];
     private readonly ObservableCollection<PriorityQueueRow> _priorityQueueRows = [];
     private readonly ObservableCollection<CriticalDrawerRow> _criticalRuntimeDrawerRows = [];
-    private readonly ObservableCollection<string> _expertBaselineViolationRows = [];
-    private readonly ObservableCollection<string> _expertBaselineMissingRows = [];
     private readonly List<string> _isolationCandidates = [];
     private readonly List<string> _isolationFoundationModules = [];
     private readonly List<FindingRow> _allFindings = [];
@@ -67,7 +59,6 @@ public partial class MainWindow : Window
     private DateTime _lastProgressUpdateUtc = DateTime.MinValue;
     private DateTime _lastSoftProgressBumpUtc = DateTime.MinValue;
     private bool _runtimeForensicsFilterSyncInProgress;
-    private bool _advancedDetailMode;
     private bool _compactFindingsLayout;
     private bool _findingsControlsCollapsed;
     private bool _workflowTriageTouched;
@@ -92,8 +83,6 @@ public partial class MainWindow : Window
     private const string UnknownRuntimeSessionKey = "session-unknown";
     private const int SoftProgressCeiling = 96;
     private const string UiPreferencesFileName = "ui-preferences.json";
-    private RuntimeDrawerView _runtimeDrawerView = RuntimeDrawerView.Chains;
-
     public MainWindow()
     {
         InitializeComponent();
@@ -101,34 +90,20 @@ public partial class MainWindow : Window
         _uiPreferences = LoadUiPreferences();
 
         GridFindings.ItemsSource = _visibleFindings;
-        GridLoadOrder.ItemsSource = _loadOrderRows;
+        GridLoadOrderTable.ItemsSource = _loadOrderRows;
         ListLoadOrderMoves.ItemsSource = _loadOrderMoveRows;
         ListLoadOrderInactiveModules.ItemsSource = _loadOrderInactiveRows;
-        ListLoadOrderBasis.ItemsSource = _loadOrderBasisRows;
-        GridSaves.ItemsSource = _saveRows;
-        ListWarnings.ItemsSource = _warningRows;
-        GridRuntimeSessions.ItemsSource = _runtimeSessionRows;
-        GridRuntimeLogs.ItemsSource = _runtimeLogRows;
-        GridRuntimeModules.ItemsSource = _runtimeModuleRows;
-        GridRuntimeChains.ItemsSource = _runtimeChainRows;
         ListPlayerRuntimeRuns.ItemsSource = _playerRuntimeSessionCardRows;
         GridPlayerRuntimeSuggestions.ItemsSource = _playerRuntimeSummaryRows;
         GridPlayerRuntimeLogDetails.ItemsSource = _runtimeLogRows;
         GridPlayerRuntimeModuleDetails.ItemsSource = _runtimeModuleRows;
         ListNextSteps.ItemsSource = _nextStepRows;
-        ListDiffNew.ItemsSource = _diffNewRows;
-        ListDiffResolved.ItemsSource = _diffResolvedRows;
-        ListDiffSeverity.ItemsSource = _diffSeverityRows;
         ListIsolationCandidates.ItemsSource = _isolationCandidateRows;
         GridIsolationSteps.ItemsSource = _isolationStepRows;
         ListPriorityQueue.ItemsSource = _priorityQueueRows;
         ListCriticalRuntimeDrawer.ItemsSource = _criticalRuntimeDrawerRows;
-        ListExpertBaselineViolations.ItemsSource = _expertBaselineViolationRows;
-        ListExpertBaselineMissing.ItemsSource = _expertBaselineMissingRows;
 
         InitializeFilterControls();
-        InitializeDiffControls();
-        InitializeExpertBaselineAudit();
         InitializePriorityQueue();
         InitializeCriticalRuntimeDrawer();
         InitializePlayerLayout();
@@ -153,6 +128,7 @@ public partial class MainWindow : Window
         _liveRuntimeHeartbeatTimer.Tick += LiveRuntimeHeartbeatTimer_Tick;
 
         Closed += (_, _) => StopLiveRuntimeWatchInfrastructure();
+        Loaded += MainWindow_Loaded;
         ResetIsolationWorkflow("Build an isolation plan from a selected finding.");
         UpdateLiveRuntimeWatchButtonState();
         UpdateRuntimeForensicsActionState();
@@ -171,6 +147,18 @@ public partial class MainWindow : Window
         _suppressUiPreferencePersist = false;
         ApplyFocusedPlayerLayout();
         PersistUiPreferences();
+    }
+
+    private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (MainTabs.SelectedItem is null)
+        {
+            MainTabs.SelectedItem = TabFindings;
+        }
+
+        UpdateOnboardingTip();
+        ApplyFocusedPlayerLayout();
+        ApplyValidatePlayerSurface();
     }
 
     private async void BtnRunScan_Click(object sender, RoutedEventArgs e)
@@ -237,22 +225,17 @@ public partial class MainWindow : Window
                 return;
             }
 
-            LoadOrderRecommendation recommendation = IsPlayerUxMode()
-                ? PlayerLoadOrderProjectionBuilder.BuildEnabledSingleplayerProjection(_lastReport.LoadOrder).Recommendation
-                : _lastReport.LoadOrder;
+            LoadOrderRecommendation recommendation = PlayerLoadOrderProjectionBuilder
+                .BuildEnabledSingleplayerProjection(_lastReport.LoadOrder)
+                .Recommendation;
             if (recommendation.Moves.Count == 0)
             {
                 SetStatus("No enabled-module load-order changes are inferred for the current profile.");
-                if (IsPlayerUxMode())
-                {
-                    SelectValidateTab(expandRuntimeEvidence: false);
-                }
+                SelectValidateTab(expandRuntimeEvidence: false);
 
                 MessageBox.Show(
                     this,
-                    IsPlayerUxMode()
-                        ? "No order changes are currently inferred for the enabled profile. Validate the current stack in game instead."
-                        : "No load-order changes are currently inferred for this profile.",
+                    "No order changes are currently inferred for the enabled profile. Validate the current stack in game instead.",
                     "No Changes Needed",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
@@ -402,18 +385,6 @@ public partial class MainWindow : Window
     private void Filters_Changed(object sender, EventArgs e) => ApplyFilters();
 
     private void LoadOrderFilter_Changed(object sender, RoutedEventArgs e) => ApplyLoadOrderFilter();
-
-    private void BtnRunExpertBaselineAudit_Click(object sender, RoutedEventArgs e)
-    {
-        RunExpertBaselineAudit();
-    }
-
-    private void BtnClearExpertBaselineAudit_Click(object sender, RoutedEventArgs e)
-    {
-        TxtExpertBaselineInput.Text = string.Empty;
-        InitializeExpertBaselineAudit();
-        SetStatus("Expert baseline input cleared.");
-    }
 
     private void BtnPlayerSettingsMenu_Click(object sender, RoutedEventArgs e)
     {
@@ -596,9 +567,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        ChkLoadOrderMovedOnly.IsChecked = true;
         MainTabs.SelectedItem = TabLoadOrder;
-        TxtPresetSummary.Text = "Load Order Audit preset: moved-only order view and baseline audit panel ready.";
+        TxtPresetSummary.Text = "Load Order Audit preset: review Do These Moves, then verify Exact Slots.";
         SetStatus("Preset applied: Load Order Audit.");
     }
 
@@ -615,10 +585,10 @@ public partial class MainWindow : Window
         ComboCategoryFilter.SelectedItem = "All";
         TxtSearch.Text = string.Empty;
         ApplyFilters();
-        MainTabs.SelectedItem = TabRuntimeForensics;
+        MainTabs.SelectedItem = TabValidate;
         _workflowValidateTouched = true;
         UpdateWorkflowRail();
-        TxtPresetSummary.Text = "Runtime Validation preset: runtime chain tab focused for evidence verification.";
+        TxtPresetSummary.Text = "Runtime Validation preset: validate the stack in game, then open Game Runs only if needed.";
         SetStatus("Preset applied: Runtime Validation.");
     }
 
@@ -668,15 +638,6 @@ public partial class MainWindow : Window
         ApplyValidatePlayerSurface();
     }
 
-    private void ChkAdvancedDetailMode_Changed(object sender, RoutedEventArgs e)
-    {
-        bool advanced = ChkAdvancedDetailMode.IsChecked == true;
-        ApplyDetailMode(advanced);
-        SetStatus(advanced
-            ? "Advanced detail mode enabled."
-            : "Advanced detail mode hidden. Showing player-focused guidance.");
-    }
-
     private void ChkCompactFindingsLayout_Changed(object sender, RoutedEventArgs e)
     {
         bool compact = ChkCompactFindingsLayout.IsChecked == true;
@@ -706,7 +667,7 @@ public partial class MainWindow : Window
     private void SelectValidateTab(bool expandRuntimeEvidence)
     {
         _playerValidateRuntimeEvidenceExpanded = expandRuntimeEvidence && HasRuntimeEvidence();
-        MainTabs.SelectedItem = TabRuntimeForensics;
+        MainTabs.SelectedItem = TabValidate;
         ApplyValidatePlayerSurface();
     }
 
@@ -828,32 +789,7 @@ public partial class MainWindow : Window
 
     private void ApplyFindingsDetailHostLayout()
     {
-        bool drawerMode = IsFocusedPlayerViewEnabled();
         bool hasSelection = GridFindings.SelectedItem is FindingRow;
-
-        if (!drawerMode)
-        {
-            Grid.SetColumn(GridFindings, 0);
-            Grid.SetColumnSpan(GridFindings, 3);
-            Grid.SetRow(GridFindings, 2);
-            Grid.SetRowSpan(GridFindings, 1);
-
-            Grid.SetColumn(BorderFindingsDetail, 0);
-            Grid.SetColumnSpan(BorderFindingsDetail, 3);
-            Grid.SetRow(BorderFindingsDetail, 4);
-            Grid.SetRowSpan(BorderFindingsDetail, 1);
-            BorderFindingsDetail.Margin = new Thickness(0, 8, 0, 0);
-            BorderFindingsDetail.Visibility = Visibility.Visible;
-
-            ColFindingsDrawerSplitter.Width = new GridLength(0);
-            ColFindingsDrawer.Width = new GridLength(0);
-            FindingsColumnSplitter.Visibility = Visibility.Collapsed;
-            FindingsRowSplitter.Visibility = Visibility.Visible;
-            RowFindingsDetail.Height = _compactFindingsLayout
-                ? new GridLength(1.5, GridUnitType.Star)
-                : new GridLength(1.7, GridUnitType.Star);
-            return;
-        }
 
         Grid.SetColumn(GridFindings, 0);
         Grid.SetColumnSpan(GridFindings, 1);
@@ -893,63 +829,26 @@ public partial class MainWindow : Window
 
     private bool IsLoadOrderFocusedSurfaceActive()
     {
-        return ReferenceEquals(MainTabs.SelectedItem, TabLoadOrder);
+        return ReferenceEquals(GetActiveMainTab(), TabLoadOrder);
     }
 
-    private bool IsRuntimeFocusedSurfaceActive()
+    private bool IsValidateTabActive()
     {
-        return ReferenceEquals(MainTabs.SelectedItem, TabRuntimeForensics);
+        return ReferenceEquals(GetActiveMainTab(), TabValidate);
     }
 
     private void ApplyLoadOrderFocusedLayout()
     {
-        bool focused = IsLoadOrderFocusedSurfaceActive();
-        GridLoadOrderMetrics.Visibility = focused ? Visibility.Collapsed : Visibility.Visible;
-        BorderLoadOrderSummaryCard.Visibility = focused ? Visibility.Collapsed : Visibility.Visible;
-        BorderLoadOrderFocusSummary.Visibility = focused ? Visibility.Visible : Visibility.Collapsed;
-        LoadOrderDetailsTabs.Visibility = focused ? Visibility.Collapsed : Visibility.Visible;
-        GridLoadOrderFocusedHost.Visibility = focused ? Visibility.Visible : Visibility.Collapsed;
-        ColLoadOrderPlan.Width = focused ? new GridLength(430) : new GridLength(380);
-        ColLoadOrderPlan.MinWidth = focused ? 340 : 300;
+        BorderLoadOrderFocusSummary.Visibility = Visibility.Visible;
+        GridLoadOrderFocusedHost.Visibility = Visibility.Visible;
+        ColLoadOrderPlan.Width = new GridLength(430);
+        ColLoadOrderPlan.MinWidth = 340;
         UpdateLoadOrderGuidance();
     }
 
     private void ApplyRuntimeFocusedLayout()
     {
-        bool focused = IsRuntimeFocusedSurfaceActive();
-        GridRuntimeMetrics.Visibility = focused ? Visibility.Collapsed : Visibility.Visible;
-        BorderRuntimeFocusSummary.Visibility = focused ? Visibility.Collapsed : Visibility.Visible;
-        RuntimeDetailsTabs.Visibility = focused ? Visibility.Collapsed : Visibility.Visible;
-        GridRuntimeFocusedHost.Visibility = focused ? Visibility.Visible : Visibility.Collapsed;
-        ColRuntimeSessions.Width = focused ? new GridLength(360) : new GridLength(320);
-        ApplyRuntimeDrawerView();
         ApplyValidatePlayerSurface();
-    }
-
-    private void ApplyRuntimeDrawerView()
-    {
-        bool focused = IsRuntimeFocusedSurfaceActive();
-        if (!focused)
-        {
-            GridRuntimeFocusedChains.Visibility = Visibility.Collapsed;
-            GridRuntimeFocusedLogs.Visibility = Visibility.Collapsed;
-            GridRuntimeFocusedModules.Visibility = Visibility.Collapsed;
-            UpdateRuntimeDrawerSelectionCard();
-            return;
-        }
-
-        GridRuntimeFocusedChains.Visibility = _runtimeDrawerView == RuntimeDrawerView.Chains
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        GridRuntimeFocusedLogs.Visibility = _runtimeDrawerView == RuntimeDrawerView.Logs
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        GridRuntimeFocusedModules.Visibility = _runtimeDrawerView == RuntimeDrawerView.Modules
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        UpdateRuntimeDrawerButtons();
-        UpdateRuntimeForensicsFocusSummary();
-        UpdateRuntimeDrawerSelectionCard();
     }
 
     private bool HasRuntimeEvidence()
@@ -960,11 +859,6 @@ public partial class MainWindow : Window
 
     private bool ShouldShowValidateIsolationSection()
     {
-        if (!IsPlayerUxMode())
-        {
-            return false;
-        }
-
         if (_isolationPendingStep?.Mode == IsolationStepMode.BinaryIsolation)
         {
             return true;
@@ -976,7 +870,7 @@ public partial class MainWindow : Window
 
     private void ApplyValidatePlayerSurface()
     {
-        bool validateTabSelected = ReferenceEquals(MainTabs.SelectedItem, TabRuntimeForensics);
+        bool validateTabSelected = ReferenceEquals(GetActiveMainTab(), TabValidate);
         int playerLoadOrderMoves = _allLoadOrderRows.Count(r => r.IsChanged);
 
         TxtRuntimeTabHeader.Text = "Validate";
@@ -984,11 +878,6 @@ public partial class MainWindow : Window
         BorderValidateCurrentCard.Visibility = Visibility.Visible;
         BorderValidateRuntimeHeader.Visibility = Visibility.Collapsed;
         BorderValidateRuntimeEmptyState.Visibility = Visibility.Collapsed;
-        BtnOpenRuntimeLogAction.Visibility = Visibility.Visible;
-        BtnFocusRuntimeFindingAction.Visibility = Visibility.Visible;
-        BtnOpenRuntimeLogDrawerAction.Visibility = Visibility.Collapsed;
-        BtnFocusRuntimeFindingDrawerAction.Visibility = Visibility.Collapsed;
-        PanelRuntimeDrawerSelectionActions.Visibility = Visibility.Collapsed;
 
         ValidatePlayerSurfaceState state = BuildValidatePlayerSurfaceState(validateTabSelected, playerLoadOrderMoves);
         TxtRuntimeActionBanner.Text = state.BannerText;
@@ -1035,25 +924,18 @@ public partial class MainWindow : Window
         BtnToggleValidateRuntimeEvidence.Content = state.ShowRuntimeEvidence ? "Hide Game Runs" : "Show Game Runs";
         BtnToggleValidateRuntimeEvidence.IsEnabled = !_isBusy;
         BorderValidateRuntimeHeader.Visibility = state.ShowRuntimeEvidence ? Visibility.Visible : Visibility.Collapsed;
-        GridRuntimeMetrics.Visibility = Visibility.Collapsed;
-        BtnOpenRuntimeLogAction.Visibility = Visibility.Collapsed;
-        BtnFocusRuntimeFindingAction.Visibility = Visibility.Collapsed;
-        BorderRuntimeActionPanel.Visibility = Visibility.Collapsed;
         BorderValidateRuntimeEmptyState.Visibility = state.ShowRuntimeEmptyState ? Visibility.Visible : Visibility.Collapsed;
         BorderPlayerRuntimeWorkbench.Visibility = state.ShowRuntimeWorkbench ? Visibility.Visible : Visibility.Collapsed;
         BtnPlayerRuntimeUseTopWarning.Visibility = state.ShowRuntimeWorkbench && _playerRuntimeSummaryRows.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
         BtnPlayerRuntimeUseTopWarning.IsEnabled = !_isBusy && _playerRuntimeSummaryRows.Count > 0;
-        GridRuntimeWorkbench.Visibility = Visibility.Collapsed;
-        RowRuntimeActionPanel.Height = new GridLength(0);
         RowRuntimeWorkbench.Height = state.ShowRuntimeWorkbench || state.ShowRuntimeEmptyState
             ? new GridLength(1, GridUnitType.Star)
             : new GridLength(0);
         GroupValidateIsolationEscalation.Visibility = state.ShowIsolationSection ? Visibility.Visible : Visibility.Collapsed;
         RowValidateIsolationEscalation.Height = state.ShowIsolationSection ? GridLength.Auto : new GridLength(0);
 
-        UpdateRuntimeDrawerSelectionCard();
         UpdatePlayerRuntimeSelectionCard();
     }
 
@@ -1077,27 +959,14 @@ public partial class MainWindow : Window
     private void UpdateLoadOrderGuidance()
     {
         int movedCount = _allLoadOrderRows.Count(r => r.IsChanged);
-        int visibleCount = _loadOrderRows.Count;
         int inactiveCount = _loadOrderInactiveRows.Count;
-        bool playerMode = IsPlayerUxMode();
-
         TxtLoadOrderPlanHint.Text = movedCount == 0
-            ? playerMode
-                ? "No moves are required for the enabled profile. Exact Slots confirms the active order; the next step is Validate."
-                : "No reordering work is currently required. Re-scan after adding or updating mods."
-            : playerMode
-                ? "Do These Moves is the actionable sequence for enabled modules only. Exact Slots is the authoritative enabled-order view."
-                : IsLoadOrderFocusedSurfaceActive()
-                    ? "Follow this execution list top-to-bottom. Exact Slots on the right is the authoritative slot truth."
-                    : "Follow this list top-to-bottom. Exact Slots on the right is the authoritative placement view.";
+            ? "No moves are required for the enabled profile. Exact Slots confirms the active order; the next step is Validate."
+            : "Do These Moves is the actionable sequence for enabled modules only. Exact Slots is the authoritative enabled-order view.";
 
         string summary = movedCount == 0
-            ? playerMode
-                ? "No order changes inferred for enabled modules. Exact Slots is the source of truth for the active singleplayer profile."
-                : "Exact Slots is the authoritative slot view. Current and suggested order already match for the visible module set."
-            : playerMode
-                ? $"{movedCount} enabled module(s) need reordering. Exact Slots is the source of truth; Do These Moves is the actionable subset."
-                : $"Exact Slots is the authoritative slot view. {visibleCount} row(s) are visible; use Do These Moves as the execution order.";
+            ? "No order changes inferred for enabled modules. Exact Slots is the source of truth for the active singleplayer profile."
+            : $"{movedCount} enabled module(s) need reordering. Exact Slots is the source of truth; Do These Moves is the actionable subset.";
         if (inactiveCount > 0)
         {
             summary += $" {inactiveCount} installed module(s) are currently disabled and not part of this plan.";
@@ -1111,23 +980,9 @@ public partial class MainWindow : Window
         _allLoadOrderRows.Clear();
         _loadOrderMoveRows.Clear();
         _loadOrderInactiveRows.Clear();
-        _loadOrderBasisRows.Clear();
-
-        LoadOrderRecommendation viewRecommendation;
-        IReadOnlyList<string> inactiveInstalledIds;
-        if (IsPlayerUxMode())
-        {
-            PlayerLoadOrderProjection projection = PlayerLoadOrderProjectionBuilder.BuildEnabledSingleplayerProjection(report.LoadOrder);
-            viewRecommendation = projection.Recommendation;
-            inactiveInstalledIds = projection.InactiveInstalledModuleIds;
-        }
-        else
-        {
-            viewRecommendation = report.LoadOrder;
-            inactiveInstalledIds = [];
-        }
-
-        TxtLoadOrderConfidence.Text = $"{viewRecommendation.Confidence:P0}";
+        PlayerLoadOrderProjection projection = PlayerLoadOrderProjectionBuilder.BuildEnabledSingleplayerProjection(report.LoadOrder);
+        LoadOrderRecommendation viewRecommendation = projection.Recommendation;
+        IReadOnlyList<string> inactiveInstalledIds = projection.InactiveInstalledModuleIds;
 
         Dictionary<string, ModuleManifest> modulesById = report.Modules
             .ToDictionary(m => m.Id, StringComparer.OrdinalIgnoreCase);
@@ -1246,40 +1101,6 @@ public partial class MainWindow : Window
             _ => $"{_loadOrderInactiveRows.Count} installed modules are currently disabled and not part of this plan.",
         };
 
-        int movedCount = _allLoadOrderRows.Count(r => r.IsChanged);
-        int unchangedCount = _allLoadOrderRows.Count - movedCount;
-        LoadOrderRow? largestMoveRow = _allLoadOrderRows
-            .Where(r => r.IsChanged)
-            .OrderByDescending(r => r.AbsoluteShift)
-            .ThenBy(r => r.ModuleId, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
-
-        TxtLoadOrderMovedCount.Text = movedCount.ToString();
-        TxtLoadOrderUnchangedCount.Text = unchangedCount.ToString();
-        TxtLoadOrderLargestMove.Text = largestMoveRow is null
-            ? "None"
-            : $"{largestMoveRow.ModuleId} ({largestMoveRow.ActionText})";
-
-        string summary = movedCount == 0
-            ? IsPlayerUxMode()
-                ? $"No order changes inferred for enabled modules. Planner confidence: {viewRecommendation.Confidence:P0}."
-                : $"Current order already matches suggested order. Planner confidence: {viewRecommendation.Confidence:P0}."
-            : IsPlayerUxMode()
-                ? $"{movedCount} enabled module(s) need reordering. Planner confidence: {viewRecommendation.Confidence:P0}."
-                : $"{movedCount} module(s) should move. Use the step-by-step plan in order. Planner confidence: {viewRecommendation.Confidence:P0}.";
-        if (_loadOrderInactiveRows.Count > 0)
-        {
-            summary += $" {_loadOrderInactiveRows.Count} installed module(s) are currently disabled and not part of this plan.";
-        }
-        TxtLoadOrderSummary.Text = summary;
-        TxtLoadOrderHint.Text = movedCount == 0
-            ? IsPlayerUxMode()
-                ? "No better order was inferred for the enabled profile. Next step: validate this stack in game."
-                : "No reordering action required. Re-scan after adding or updating mods."
-            : IsPlayerUxMode()
-                ? "Apply the enabled-module moves top-to-bottom, then validate the current stack in game."
-                : "Apply moves from top to bottom, then test launch + quick battle before long saves.";
-
         int stepNumber = 1;
         foreach (LoadOrderRow row in _allLoadOrderRows.Where(r => r.IsChanged).Take(120))
         {
@@ -1289,21 +1110,7 @@ public partial class MainWindow : Window
 
         if (_loadOrderMoveRows.Count == 0)
         {
-            _loadOrderMoveRows.Add(IsPlayerUxMode()
-                ? "No moves required for the enabled profile."
-                : "No moves required.");
-        }
-
-        if (viewRecommendation.Rationale.Count > 0)
-        {
-            foreach (string rationale in viewRecommendation.Rationale.Take(12))
-            {
-                _loadOrderBasisRows.Add(rationale);
-            }
-        }
-        else
-        {
-            _loadOrderBasisRows.Add("No planner rationale was attached.");
+            _loadOrderMoveRows.Add("No moves required for the enabled profile.");
         }
 
         ApplyLoadOrderFilter();
@@ -1379,184 +1186,24 @@ public partial class MainWindow : Window
         return $"{moduleId} ({type})";
     }
 
-    private void SetRuntimeDrawerView(RuntimeDrawerView view)
-    {
-        _runtimeDrawerView = view;
-        ApplyRuntimeDrawerView();
-        if (_allRuntimeChainRows.Count > 0)
-        {
-            ApplyRuntimeForensicsFilters();
-        }
-        else
-        {
-            UpdateRuntimeForensicsActionState();
-        }
-    }
-
-    private void UpdateRuntimeDrawerButtons()
-    {
-        ApplyRuntimeDrawerButtonState(BtnRuntimeDrawerChains, _runtimeDrawerView == RuntimeDrawerView.Chains);
-        ApplyRuntimeDrawerButtonState(BtnRuntimeDrawerLogs, _runtimeDrawerView == RuntimeDrawerView.Logs);
-        ApplyRuntimeDrawerButtonState(BtnRuntimeDrawerModules, _runtimeDrawerView == RuntimeDrawerView.Modules);
-    }
-
-    private static void ApplyRuntimeDrawerButtonState(Button button, bool active)
-    {
-        button.FontWeight = active ? FontWeights.Bold : FontWeights.SemiBold;
-        button.Opacity = active ? 1.0 : 0.82;
-        button.Background = active
-            ? new SolidColorBrush(Color.FromRgb(0x39, 0x2B, 0x1A))
-            : new SolidColorBrush(Color.FromRgb(0x26, 0x2E, 0x38));
-        button.BorderBrush = active
-            ? new SolidColorBrush(Color.FromRgb(0xC8, 0x9A, 0x56))
-            : new SolidColorBrush(Color.FromRgb(0x68, 0x52, 0x2C));
-    }
-
     private RuntimeChainRow? GetSelectedRuntimeChainRow()
     {
-        if (IsPlayerUxMode() && BorderPlayerRuntimeWorkbench.Visibility == Visibility.Visible)
-        {
-            return (GridPlayerRuntimeSuggestions.SelectedItem as PlayerRuntimeSummaryRow)?.Source;
-        }
-
-        if (IsRuntimeFocusedSurfaceActive())
-        {
-            return _runtimeDrawerView == RuntimeDrawerView.Chains
-                ? GridRuntimeFocusedChains.SelectedItem as RuntimeChainRow
-                : null;
-        }
-
-        return GridRuntimeChains.SelectedItem as RuntimeChainRow;
+        return (GridPlayerRuntimeSuggestions.SelectedItem as PlayerRuntimeSummaryRow)?.Source;
     }
 
     private RuntimeLogRow? GetSelectedRuntimeLogRow()
     {
-        if (IsPlayerUxMode() && BorderPlayerRuntimeWorkbench.Visibility == Visibility.Visible)
-        {
-            return GridPlayerRuntimeLogDetails.SelectedItem as RuntimeLogRow;
-        }
-
-        if (IsRuntimeFocusedSurfaceActive())
-        {
-            return _runtimeDrawerView == RuntimeDrawerView.Logs
-                ? GridRuntimeFocusedLogs.SelectedItem as RuntimeLogRow
-                : null;
-        }
-
-        return GridRuntimeLogs.SelectedItem as RuntimeLogRow;
+        return GridPlayerRuntimeLogDetails.SelectedItem as RuntimeLogRow;
     }
 
     private RuntimeModuleRow? GetSelectedRuntimeModuleRow()
     {
-        if (IsPlayerUxMode() && BorderPlayerRuntimeWorkbench.Visibility == Visibility.Visible)
-        {
-            return GridPlayerRuntimeModuleDetails.SelectedItem as RuntimeModuleRow;
-        }
-
-        if (IsRuntimeFocusedSurfaceActive())
-        {
-            return _runtimeDrawerView == RuntimeDrawerView.Modules
-                ? GridRuntimeFocusedModules.SelectedItem as RuntimeModuleRow
-                : null;
-        }
-
-        return GridRuntimeModules.SelectedItem as RuntimeModuleRow;
-    }
-
-    private void UpdateRuntimeDrawerSelectionCard()
-    {
-        if (!IsRuntimeFocusedSurfaceActive())
-        {
-            TxtRuntimeDrawerSelectionTitle.Text = "No runtime drawer row selected.";
-            TxtRuntimeDrawerSelectionBody.Text = "Select a row to inspect the current runtime context.";
-            PanelRuntimeDrawerSelectionActions.Visibility = Visibility.Collapsed;
-            BtnOpenRuntimeLogDrawerAction.Visibility = Visibility.Collapsed;
-            BtnFocusRuntimeFindingDrawerAction.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        if (GetSelectedRuntimeChainRow() is RuntimeChainRow chain)
-        {
-            TxtRuntimeDrawerSelectionTitle.Text = $"[{chain.Risk}] {chain.Finding}";
-            TxtRuntimeDrawerSelectionBody.Text = $"Modules: {chain.Modules}. Log: {chain.LogFile}. Confidence: {chain.Confidence}. Signal: {chain.Signal}.";
-            PanelRuntimeDrawerSelectionActions.Visibility = Visibility.Visible;
-            BtnOpenRuntimeLogDrawerAction.Visibility = string.IsNullOrWhiteSpace(chain.LogPath) ? Visibility.Collapsed : Visibility.Visible;
-            BtnFocusRuntimeFindingDrawerAction.Visibility = Visibility.Visible;
-            return;
-        }
-
-        if (GetSelectedRuntimeLogRow() is RuntimeLogRow log)
-        {
-            TxtRuntimeDrawerSelectionTitle.Text = $"{log.SignalType} log artifact";
-            TxtRuntimeDrawerSelectionBody.Text = $"{log.FileName} hit {log.FindingHits} finding(s) in session {BuildRuntimeSessionLabel(log.SessionKey)}.";
-            PanelRuntimeDrawerSelectionActions.Visibility = Visibility.Visible;
-            BtnOpenRuntimeLogDrawerAction.Visibility = Visibility.Visible;
-            BtnFocusRuntimeFindingDrawerAction.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        if (GetSelectedRuntimeModuleRow() is RuntimeModuleRow module)
-        {
-            TxtRuntimeDrawerSelectionTitle.Text = $"{module.ModuleId} runtime footprint";
-            TxtRuntimeDrawerSelectionBody.Text = $"{module.CorrelatedFindings} correlated finding(s), sessions: {module.SessionCoverage}, max risk: {module.MaxRisk}. Top categories: {module.TopCategories}.";
-            PanelRuntimeDrawerSelectionActions.Visibility = Visibility.Collapsed;
-            BtnOpenRuntimeLogDrawerAction.Visibility = Visibility.Collapsed;
-            BtnFocusRuntimeFindingDrawerAction.Visibility = Visibility.Collapsed;
-            return;
-        }
-
-        TxtRuntimeDrawerSelectionTitle.Text = _runtimeDrawerView switch
-        {
-            RuntimeDrawerView.Logs => "No log artifact selected.",
-            RuntimeDrawerView.Modules => "No correlated module selected.",
-            _ => "No evidence chain selected.",
-        };
-        TxtRuntimeDrawerSelectionBody.Text = _runtimeDrawerView switch
-        {
-            RuntimeDrawerView.Logs => "Select a log row to inspect the concrete artifact that supports the current runtime scope.",
-            RuntimeDrawerView.Modules => "Select a module row to see which module keeps recurring across the visible runtime evidence.",
-            _ => "Select a chain to inspect the current runtime path, then jump back into Findings if needed.",
-        };
-        PanelRuntimeDrawerSelectionActions.Visibility = Visibility.Collapsed;
-        BtnOpenRuntimeLogDrawerAction.Visibility = Visibility.Collapsed;
-        BtnFocusRuntimeFindingDrawerAction.Visibility = Visibility.Collapsed;
+        return GridPlayerRuntimeModuleDetails.SelectedItem as RuntimeModuleRow;
     }
 
     private void UpdatePlayerRuntimeSelectionCard()
     {
         // Player-mode runtime warnings are rendered as self-contained cards.
-    }
-
-    private void GridRuntimeLogs_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_runtimeForensicsFilterSyncInProgress)
-        {
-            return;
-        }
-
-        ApplyRuntimeForensicsFilters();
-        UpdateRuntimeDrawerSelectionCard();
-    }
-
-    private void GridRuntimeModules_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_runtimeForensicsFilterSyncInProgress)
-        {
-            return;
-        }
-
-        ApplyRuntimeForensicsFilters();
-        UpdateRuntimeDrawerSelectionCard();
-    }
-
-    private void GridRuntimeSessions_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_runtimeForensicsFilterSyncInProgress)
-        {
-            return;
-        }
-
-        ApplyRuntimeForensicsFilters();
     }
 
     private void ListPlayerRuntimeRuns_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1567,13 +1214,6 @@ public partial class MainWindow : Window
         }
 
         ApplyRuntimeForensicsFilters();
-    }
-
-    private void GridRuntimeChains_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        UpdateRuntimeForensicsActionState();
-        UpdateRuntimeForensicsFocusSummary();
-        UpdateRuntimeDrawerSelectionCard();
     }
 
     private void GridPlayerRuntimeSuggestions_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1611,28 +1251,6 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private void GridRuntimeFocusedLogs_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_runtimeForensicsFilterSyncInProgress)
-        {
-            return;
-        }
-
-        ApplyRuntimeForensicsFilters();
-        UpdateRuntimeDrawerSelectionCard();
-    }
-
-    private void GridRuntimeFocusedModules_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_runtimeForensicsFilterSyncInProgress)
-        {
-            return;
-        }
-
-        ApplyRuntimeForensicsFilters();
-        UpdateRuntimeDrawerSelectionCard();
-    }
-
     private void GridPlayerRuntimeLogDetails_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_runtimeForensicsFilterSyncInProgress)
@@ -1653,13 +1271,6 @@ public partial class MainWindow : Window
 
         ApplyRuntimeForensicsFilters();
         UpdatePlayerRuntimeSelectionCard();
-    }
-
-    private void GridRuntimeFocusedChains_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        UpdateRuntimeForensicsActionState();
-        UpdateRuntimeForensicsFocusSummary();
-        UpdateRuntimeDrawerSelectionCard();
     }
 
     private void BtnClearRuntimeForensicsFilter_Click(object sender, RoutedEventArgs e)
@@ -1706,49 +1317,9 @@ public partial class MainWindow : Window
         SetStatus(startMessage);
     }
 
-    private void BtnOpenSelectedRuntimeLog_Click(object sender, RoutedEventArgs e)
-    {
-        OpenSelectedRuntimeLogFromSelection();
-    }
-
-    private void GridRuntimeLogs_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        OpenSelectedRuntimeLogFromSelection();
-    }
-
     private void GridRuntimeFocusedLogs_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         OpenSelectedRuntimeLogFromSelection();
-    }
-
-    private void BtnFocusRuntimeChainFinding_Click(object sender, RoutedEventArgs e)
-    {
-        FocusSelectedRuntimeChainFinding(switchToFindingsTab: true);
-    }
-
-    private void GridRuntimeChains_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        FocusSelectedRuntimeChainFinding(switchToFindingsTab: true);
-    }
-
-    private void GridRuntimeFocusedChains_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        FocusSelectedRuntimeChainFinding(switchToFindingsTab: true);
-    }
-
-    private void BtnRuntimeDrawerChains_Click(object sender, RoutedEventArgs e)
-    {
-        SetRuntimeDrawerView(RuntimeDrawerView.Chains);
-    }
-
-    private void BtnRuntimeDrawerLogs_Click(object sender, RoutedEventArgs e)
-    {
-        SetRuntimeDrawerView(RuntimeDrawerView.Logs);
-    }
-
-    private void BtnRuntimeDrawerModules_Click(object sender, RoutedEventArgs e)
-    {
-        SetRuntimeDrawerView(RuntimeDrawerView.Modules);
     }
 
     private void BtnJumpToCritical_Click(object sender, RoutedEventArgs e)
@@ -1953,7 +1524,7 @@ public partial class MainWindow : Window
                     SanitizeForTsv(row.ExecutionChain)));
             }
         }
-        else if (ReferenceEquals(grid, GridLoadOrder) || ReferenceEquals(grid, GridLoadOrderFocusedTable))
+        else if (ReferenceEquals(grid, GridLoadOrderTable))
         {
             sb.AppendLine("Type\tModule\tCurrent #\tSuggested #\tChange\tAction\tWhy It Matters");
             foreach (LoadOrderRow row in selected.OfType<LoadOrderRow>())
@@ -1968,32 +1539,7 @@ public partial class MainWindow : Window
                     SanitizeForTsv(row.WhyText)));
             }
         }
-        else if (ReferenceEquals(grid, GridSaves))
-        {
-            sb.AppendLine("Save\tSize (MB)\tReferenced Installed Mods");
-            foreach (SaveInsightRow row in selected.OfType<SaveInsightRow>())
-            {
-                sb.AppendLine(string.Join('\t',
-                    SanitizeForTsv(row.SaveName),
-                    row.SizeMb,
-                    row.ReferencedCount));
-            }
-        }
-        else if (ReferenceEquals(grid, GridRuntimeSessions))
-        {
-            sb.AppendLine("Session\tLatest Log (UTC)\tChains\tModules\tMax Risk\tState");
-            foreach (RuntimeSessionRow row in selected.OfType<RuntimeSessionRow>())
-            {
-                sb.AppendLine(string.Join('\t',
-                    SanitizeForTsv(row.SessionLabel),
-                    SanitizeForTsv(row.LastLogUtc),
-                    row.ChainCount,
-                    row.ModuleCount,
-                    SanitizeForTsv(row.MaxRisk),
-                    SanitizeForTsv(row.StateLabel)));
-            }
-        }
-        else if (ReferenceEquals(grid, GridRuntimeLogs) || ReferenceEquals(grid, GridRuntimeFocusedLogs))
+        else if (ReferenceEquals(grid, GridPlayerRuntimeLogDetails))
         {
             sb.AppendLine("Signal\tSession\tLog File\tFindings\tPath");
             foreach (RuntimeLogRow row in selected.OfType<RuntimeLogRow>())
@@ -2006,7 +1552,7 @@ public partial class MainWindow : Window
                     SanitizeForTsv(row.Path)));
             }
         }
-        else if (ReferenceEquals(grid, GridRuntimeModules) || ReferenceEquals(grid, GridRuntimeFocusedModules))
+        else if (ReferenceEquals(grid, GridPlayerRuntimeModuleDetails))
         {
             sb.AppendLine("Module\tCorrelated Findings\tSessions\tMax Risk\tTop Categories");
             foreach (RuntimeModuleRow row in selected.OfType<RuntimeModuleRow>())
@@ -2017,21 +1563,6 @@ public partial class MainWindow : Window
                     SanitizeForTsv(row.SessionCoverage),
                     SanitizeForTsv(row.MaxRisk),
                     SanitizeForTsv(row.TopCategories)));
-            }
-        }
-        else if (ReferenceEquals(grid, GridRuntimeChains) || ReferenceEquals(grid, GridRuntimeFocusedChains))
-        {
-            sb.AppendLine("Log File\tLog Path\tModules\tFinding\tRisk\tConfidence\tSignal");
-            foreach (RuntimeChainRow row in selected.OfType<RuntimeChainRow>())
-            {
-                sb.AppendLine(string.Join('\t',
-                    SanitizeForTsv(row.LogFile),
-                    SanitizeForTsv(row.LogPath),
-                    SanitizeForTsv(row.Modules),
-                    SanitizeForTsv(row.Finding),
-                    SanitizeForTsv(row.Risk),
-                    SanitizeForTsv(row.Confidence),
-                    SanitizeForTsv(row.Signal)));
             }
         }
         else if (ReferenceEquals(grid, GridIsolationSteps))
@@ -2102,7 +1633,6 @@ public partial class MainWindow : Window
 
     private void ApplyDetailMode(bool advanced)
     {
-        _advancedDetailMode = advanced;
         Visibility advancedVisibility = advanced ? Visibility.Visible : Visibility.Collapsed;
         BlockDetailTechnicalRow.Visibility = advancedVisibility;
         BlockDetailExecutionRow.Visibility = advancedVisibility;
@@ -2121,7 +1651,6 @@ public partial class MainWindow : Window
         bool hasTriage = hasScan && _workflowTriageTouched;
         bool hasFix = hasScan && _workflowFixTouched;
         bool hasValidate = hasScan && _workflowValidateTouched;
-        bool playerMode = IsPlayerUxMode();
 
         bool scanActive = !hasScan;
         bool triageActive = hasScan && !hasTriage;
@@ -2140,9 +1669,7 @@ public partial class MainWindow : Window
             ? "3) Fix: run a scan first."
             : hasFix
                 ? "3) Fix: done (load-order/isolation action recorded)."
-                : playerMode
-                    ? "3) Fix: apply suggested order or start Validate from the selected finding."
-                    : "3) Fix: apply suggested order or run Isolation Lab.";
+                : "3) Fix: apply suggested order or start Validate from the selected finding.";
         TxtWorkflowValidateState.Text = !hasScan
             ? "4) Validate: run a scan first."
             : hasValidate
@@ -2168,12 +1695,8 @@ public partial class MainWindow : Window
             : hasFix
                 ? "Fix action recorded. Re-scan if you changed module set."
                 : hasTriage
-                    ? playerMode
-                        ? "Triage started. Apply suggested order or open Validate from the selected finding."
-                        : "Triage started. Apply suggested order or isolate top blockers."
-                    : playerMode
-                        ? "Review Findings, then apply suggested order or start Validate."
-                        : "Review Findings, then apply suggested order for top blockers.";
+                    ? "Triage started. Apply suggested order or open Validate from the selected finding."
+                    : "Review Findings, then apply suggested order or start Validate.";
         TxtQuickStepValidateState.Text = !hasScan
             ? "Collect runtime logs after first gameplay session."
             : hasValidate
@@ -2454,7 +1977,6 @@ public partial class MainWindow : Window
 
         UpdateRuntimeEvidenceSummary(report, runtimeEvidenceRequested);
         PopulateRuntimeForensics(report);
-        PopulateScanDiff(previousReport, report);
 
         TxtStatusHeader.Text = ToDisplayState(report.OverallState);
         TxtModulesCount.Text = report.Modules.Count.ToString();
@@ -2467,24 +1989,6 @@ public partial class MainWindow : Window
         TxtConfidenceSummary.Text = confidenceSummary;
         TxtConfidenceBreakdown.Text = confidenceBreakdown;
         UpdateRiskScorePanel(report, previousReport);
-
-        _warningRows.Clear();
-        HashSet<string> seenWarnings = new(StringComparer.OrdinalIgnoreCase);
-        foreach (string warning in report.Warnings.Where(w => seenWarnings.Add(w)).Take(350))
-        {
-            _warningRows.Add(warning);
-        }
-
-        _saveRows.Clear();
-        foreach (SaveFileInsight save in report.SaveFiles.OrderByDescending(s => s.ReferencedInstalledMods.Count).ThenBy(s => s.SavePath))
-        {
-            _saveRows.Add(new SaveInsightRow
-            {
-                SaveName = Path.GetFileName(save.SavePath),
-                SizeMb = (save.FileSizeBytes / 1024d / 1024d).ToString("0.0"),
-                ReferencedCount = save.ReferencedInstalledMods.Count,
-            });
-        }
 
         Dictionary<string, int> currentIndex = report.LoadOrder.CurrentOrder
             .Select((id, idx) => new { id, idx })
@@ -2527,7 +2031,6 @@ public partial class MainWindow : Window
         }
 
         UpdateIsolationWorkflowButtons();
-        EvaluateExpertBaselineAudit(report, announceStatus: false);
         SetStatus($"Scan complete: {report.Conflicts.Count} findings across {report.Modules.Count} modules.");
     }
 
@@ -2761,13 +2264,6 @@ public partial class MainWindow : Window
             GridPlayerRuntimeSuggestions.UnselectAll();
             GridPlayerRuntimeLogDetails.UnselectAll();
             GridPlayerRuntimeModuleDetails.UnselectAll();
-            GridRuntimeSessions.UnselectAll();
-            GridRuntimeLogs.UnselectAll();
-            GridRuntimeModules.UnselectAll();
-            GridRuntimeChains.UnselectAll();
-            GridRuntimeFocusedLogs.UnselectAll();
-            GridRuntimeFocusedModules.UnselectAll();
-            GridRuntimeFocusedChains.UnselectAll();
         }
         finally
         {
@@ -2777,17 +2273,8 @@ public partial class MainWindow : Window
 
     private HashSet<string> GetSelectedRuntimeSessionKeys()
     {
-        if (IsPlayerUxMode() && BorderPlayerRuntimeWorkbench.Visibility == Visibility.Visible)
-        {
-            return ListPlayerRuntimeRuns.SelectedItems
-                .OfType<PlayerRuntimeSessionCardRow>()
-                .Select(r => r.SessionKey)
-                .Where(key => !string.IsNullOrWhiteSpace(key))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        }
-
-        return GridRuntimeSessions.SelectedItems
-            .OfType<RuntimeSessionRow>()
+        return ListPlayerRuntimeRuns.SelectedItems
+            .OfType<PlayerRuntimeSessionCardRow>()
             .Select(r => r.SessionKey)
             .Where(key => !string.IsNullOrWhiteSpace(key))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -2795,27 +2282,7 @@ public partial class MainWindow : Window
 
     private HashSet<string> GetSelectedRuntimeLogPaths()
     {
-        if (IsPlayerUxMode() && BorderPlayerRuntimeWorkbench.Visibility == Visibility.Visible)
-        {
-            return GridPlayerRuntimeLogDetails.SelectedItems
-                .OfType<RuntimeLogRow>()
-                .Select(r => r.Path)
-                .Where(path => !string.IsNullOrWhiteSpace(path))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        }
-
-        if (IsRuntimeFocusedSurfaceActive())
-        {
-            return _runtimeDrawerView == RuntimeDrawerView.Logs
-                ? GridRuntimeFocusedLogs.SelectedItems
-                    .OfType<RuntimeLogRow>()
-                    .Select(r => r.Path)
-                    .Where(path => !string.IsNullOrWhiteSpace(path))
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase)
-                : [];
-        }
-
-        return GridRuntimeLogs.SelectedItems
+        return GridPlayerRuntimeLogDetails.SelectedItems
             .OfType<RuntimeLogRow>()
             .Select(r => r.Path)
             .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -2824,27 +2291,7 @@ public partial class MainWindow : Window
 
     private HashSet<string> GetSelectedRuntimeModuleIds()
     {
-        if (IsPlayerUxMode() && BorderPlayerRuntimeWorkbench.Visibility == Visibility.Visible)
-        {
-            return GridPlayerRuntimeModuleDetails.SelectedItems
-                .OfType<RuntimeModuleRow>()
-                .Select(r => r.ModuleId)
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        }
-
-        if (IsRuntimeFocusedSurfaceActive())
-        {
-            return _runtimeDrawerView == RuntimeDrawerView.Modules
-                ? GridRuntimeFocusedModules.SelectedItems
-                    .OfType<RuntimeModuleRow>()
-                    .Select(r => r.ModuleId)
-                    .Where(id => !string.IsNullOrWhiteSpace(id))
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase)
-                : [];
-        }
-
-        return GridRuntimeModules.SelectedItems
+        return GridPlayerRuntimeModuleDetails.SelectedItems
             .OfType<RuntimeModuleRow>()
             .Select(r => r.ModuleId)
             .Where(id => !string.IsNullOrWhiteSpace(id))
@@ -3019,15 +2466,9 @@ public partial class MainWindow : Window
         HashSet<string> selectedLogPaths,
         HashSet<string> selectedModuleIds)
     {
-        TxtRuntimeMetricSessions.Text = _runtimeSessionRows.Count.ToString();
-        TxtRuntimeMetricChains.Text = _runtimeChainRows.Count.ToString();
-        TxtRuntimeMetricLogs.Text = _runtimeLogRows.Count.ToString();
-        TxtRuntimeMetricModules.Text = _runtimeModuleRows.Count.ToString();
-
         if (_allRuntimeChainRows.Count == 0)
         {
             TxtRuntimeForensicsSummary.Text = "No runtime evidence loaded yet. Run Collect Runtime Evidence after gameplay.";
-            TxtRuntimeSessionHint.Text = "After a session, select the latest run here to focus chains, logs, and modules.";
             TxtPlayerRuntimeRunsHint.Text = "No recent game runs are available yet.";
             TxtPlayerRuntimeSummaryHint.Text = "When logs exist, this panel will explain the clearest warnings in plain language.";
             UpdateRuntimeForensicsFocusSummary();
@@ -3045,10 +2486,7 @@ public partial class MainWindow : Window
         if (!hasFilters)
         {
             TxtRuntimeForensicsSummary.Text =
-                $"Runtime evidence available. Highest visible risk: {highestRisk}. Start with Sessions on the left, then inspect Evidence Chains.";
-            TxtRuntimeSessionHint.Text = _runtimeSessionRows.Count == 0
-                ? "No captured sessions are visible."
-                : $"{_runtimeSessionRows.Count} session(s) available. Most recent sessions are listed first.";
+                $"Runtime evidence available. Highest visible risk: {highestRisk}. Open Game Runs only if you need help from logs.";
             TxtPlayerRuntimeRunsHint.Text = _playerRuntimeSessionCardRows.Count == 0
                 ? "No recent game runs are visible."
                 : "Pick the run that best matches what happened in game.";
@@ -3065,9 +2503,6 @@ public partial class MainWindow : Window
         string moduleFilter = selectedModuleIds.Count == 0 ? "all modules" : $"{selectedModuleIds.Count} module";
         TxtRuntimeForensicsSummary.Text =
             $"Focus active: {sessionFilter}, {logFilter}, {moduleFilter}. Highest visible risk: {highestRisk}.";
-        TxtRuntimeSessionHint.Text = selectedSessionKeys.Count == 0
-            ? "Session rail shows all visible sessions in the current evidence scope."
-            : $"{selectedSessionKeys.Count} session filter(s) active. Clear filter to return to full runtime history.";
         TxtPlayerRuntimeRunsHint.Text = selectedSessionKeys.Count == 0
             ? "Recent game runs are still unfiltered."
             : "A specific run is selected. Clear the run filter to widen the view again.";
@@ -3080,78 +2515,23 @@ public partial class MainWindow : Window
 
     private void UpdateRuntimeForensicsFocusSummary()
     {
-        if (IsPlayerUxMode())
-        {
-            if (_allRuntimeChainRows.Count == 0)
-            {
-                TxtRuntimeFocusSummary.Text = "If the game behaves strangely, open recent runs and start with the clearest log warning.";
-                TxtRuntimeDrawerHint.Text = "More Details is optional. Open it only if the player summary is not enough.";
-                return;
-            }
-
-            if (GetSelectedRuntimeChainRow() is RuntimeChainRow selectedPlayerChain)
-            {
-                TxtRuntimeFocusSummary.Text = $"{selectedPlayerChain.Finding}. Open the log only if this summary is not enough.";
-                TxtRuntimeDrawerHint.Text = $"Try this first: {selectedPlayerChain.QuickFix}";
-                return;
-            }
-
-            TxtRuntimeFocusSummary.Text = "Start with the run that matches what you just tested, then read the top visible warning.";
-            TxtRuntimeDrawerHint.Text = "More Details is optional. Use it only when the player summary is not enough.";
-            return;
-        }
-
-        string summary;
-        string drawerHint;
-
         if (_allRuntimeChainRows.Count == 0)
         {
-            summary = "Start with a recent session, then use Evidence Chains to inspect the highest-risk runtime path.";
-            drawerHint = "Evidence Chains ranks runtime-linked findings. Switch to logs or modules only when you need supporting artifacts.";
-            TxtRuntimeFocusSummary.Text = summary;
-            TxtRuntimeDrawerHint.Text = drawerHint;
+            TxtValidateRuntimeSectionHint.Text = "Leave this closed unless something actually goes wrong in game.";
+            TxtPlayerRuntimeRunsHint.Text = "No recent game runs are available yet.";
+            TxtPlayerRuntimeSummaryHint.Text = "When logs exist, this panel will explain the clearest warnings in plain language.";
             return;
         }
 
-        if (GetSelectedRuntimeChainRow() is RuntimeChainRow selectedChain)
+        if (GetSelectedRuntimeChainRow() is RuntimeChainRow selectedPlayerChain)
         {
-            summary =
-                $"Selected chain: {selectedChain.Finding} on {selectedChain.LogFile} affecting {selectedChain.Modules}. Use Focus Chain In Findings to jump to the matching blocker.";
-            drawerHint = "Selected evidence chain is the current focus. Use Focus Chain In Findings to jump straight back to the matching blocker.";
-            TxtRuntimeFocusSummary.Text = summary;
-            TxtRuntimeDrawerHint.Text = drawerHint;
+            TxtValidateRuntimeSectionHint.Text = "Game runs are optional support. Open a raw log only if the summary is not enough.";
+            TxtPlayerRuntimeSummaryHint.Text = $"{selectedPlayerChain.Finding} Try this first: {selectedPlayerChain.QuickFix}";
             return;
         }
 
-        int selectedSessionCount = GetSelectedRuntimeSessionKeys().Count;
-        int selectedLogCount = GetSelectedRuntimeLogPaths().Count;
-        int selectedModuleCount = GetSelectedRuntimeModuleIds().Count;
-        if (selectedSessionCount == 0 && selectedLogCount == 0 && selectedModuleCount == 0)
-        {
-            summary = IsRuntimeFocusedSurfaceActive()
-                ? "Sessions are the primary scope. Use the drawer buttons to inspect chains, logs, or correlated modules without leaving this screen."
-                : "No focus filter is active. Evidence Chains ranks runtime-linked findings by severity and confidence.";
-            drawerHint = _runtimeDrawerView switch
-            {
-                RuntimeDrawerView.Logs => "Log Artifacts shows concrete files captured in the current session scope. Open a row to inspect the raw evidence.",
-                RuntimeDrawerView.Modules => "Correlated Modules aggregates which modules recur across visible runtime evidence chains.",
-                _ => "Start with Evidence Chains, then step into logs or modules only when you need support detail.",
-            };
-            TxtRuntimeFocusSummary.Text = summary;
-            TxtRuntimeDrawerHint.Text = drawerHint;
-            return;
-        }
-
-        summary =
-            $"Focused scope: {_runtimeChainRows.Count} chain(s), {_runtimeLogRows.Count} log artifact(s), {_runtimeModuleRows.Count} module row(s). Select a chain to jump back into Findings.";
-        drawerHint = _runtimeDrawerView switch
-        {
-            RuntimeDrawerView.Logs => "Log drawer is active. Clear or change the current log selection to widen the runtime evidence scope.",
-            RuntimeDrawerView.Modules => "Module drawer is active. Select a module to narrow the evidence set to the modules that recur across the current sessions.",
-            _ => "Chain drawer is active. Select the highest-risk chain to jump directly back into Findings.",
-        };
-        TxtRuntimeFocusSummary.Text = summary;
-        TxtRuntimeDrawerHint.Text = drawerHint;
+        TxtValidateRuntimeSectionHint.Text = "Open this only if the issue actually showed up in game.";
+        TxtPlayerRuntimeSummaryHint.Text = "Start with the run that matches what you just tested, then read the clearest visible warning.";
     }
 
     private void UpdateRuntimeForensicsActionState()
@@ -3160,15 +2540,7 @@ public partial class MainWindow : Window
         bool hasFilter = GetSelectedRuntimeSessionKeys().Count > 0
             || GetSelectedRuntimeLogPaths().Count > 0
             || GetSelectedRuntimeModuleIds().Count > 0;
-        RuntimeLogRow? selectedLogRow = GetSelectedRuntimeLogRow();
-        RuntimeChainRow? selectedChainRow = GetSelectedRuntimeChainRow();
-        bool canOpenLog = selectedLogRow is not null
-            || (selectedChainRow is not null && !string.IsNullOrWhiteSpace(selectedChainRow.LogPath));
-        bool canFocusFinding = selectedChainRow is not null;
-
-        BtnClearRuntimeFilterAction.IsEnabled = !_isBusy && hasEvidence && hasFilter;
-        BtnOpenRuntimeLogAction.IsEnabled = !_isBusy && canOpenLog;
-        BtnFocusRuntimeFindingAction.IsEnabled = !_isBusy && canFocusFinding;
+        BtnPlayerRuntimeClearFilterLocal.IsEnabled = !_isBusy && hasEvidence && hasFilter;
         BtnPlayerRuntimeUseTopWarning.IsEnabled = !_isBusy && _playerRuntimeSummaryRows.Count > 0;
         UpdatePlayerRuntimeSelectionCard();
         ApplyValidatePlayerSurface();
@@ -3599,9 +2971,8 @@ public partial class MainWindow : Window
 
     private void ApplyLoadOrderFilter()
     {
-        bool movedOnly = ChkLoadOrderMovedOnly.IsChecked == true;
         _loadOrderRows.Clear();
-        foreach (LoadOrderRow row in _allLoadOrderRows.Where(r => !movedOnly || r.IsChanged))
+        foreach (LoadOrderRow row in _allLoadOrderRows)
         {
             _loadOrderRows.Add(row);
         }
@@ -3610,8 +2981,33 @@ public partial class MainWindow : Window
 
     private void InitializePlayerLayout()
     {
-        ApplyUxMode();
+        TxtFindingsToolbarIntro.Text = "Plain-language triage table first. Open Refine Results only when you need filters.";
+        ExpFindingsRefineResults.Header = "Refine Results";
+        ExpFindingsRefineResults.IsExpanded = false;
+        BtnDetailOpenRuntime.Content = "Open Validate";
+        BtnDetailOpenIsolation.Content = "Start Validation";
+        ApplyFindingsColumnVisibility();
+        SetFindingsControlsCollapsed(collapsed: true, announce: false);
+
+        string desiredConfidenceFloor = "60%";
+        if (!string.Equals(ComboConfidenceFloor.SelectedItem?.ToString(), desiredConfidenceFloor, StringComparison.OrdinalIgnoreCase))
+        {
+            ComboConfidenceFloor.SelectedItem = desiredConfidenceFloor;
+        }
+
+        bool compactSetting = ChkCompactFindingsLayout.IsChecked ?? true;
+        if (ChkCompactFindingsLayout.IsChecked is null)
+        {
+            ChkCompactFindingsLayout.IsChecked = compactSetting;
+        }
+        else
+        {
+            ApplyFindingsDensity(compactSetting);
+        }
+
         SetControlsCollapsed(_uiPreferences.ControlsPanelCollapsed ?? true);
+        UpdatePlayerSettingsHeaderState();
+        TxtPresetSummary.Text = "Primary workflow: Findings, Load Order, then Validate.";
     }
 
     private void InitializeFindingsDensityControls()
@@ -3654,150 +3050,21 @@ public partial class MainWindow : Window
         ApplyFindingsDetailHostLayout();
     }
 
-    private void ApplyFindingsColumnVisibility(bool playerMode)
+    private void ApplyFindingsColumnVisibility()
     {
-        bool showTechnicalColumns = !playerMode;
-        ColFindingConfidence.Visibility = showTechnicalColumns ? Visibility.Visible : Visibility.Collapsed;
-        ColFindingEvidence.Visibility = showTechnicalColumns ? Visibility.Visible : Visibility.Collapsed;
-        ColFindingImpact.Visibility = showTechnicalColumns ? Visibility.Visible : Visibility.Collapsed;
-        ColFindingSymptoms.Visibility = showTechnicalColumns ? Visibility.Visible : Visibility.Collapsed;
-        ColFindingIssue.Width = playerMode
-            ? new DataGridLength(2.2, DataGridLengthUnitType.Star)
-            : new DataGridLength(240);
-
-        ColFindingModules.Width = playerMode
-            ? new DataGridLength(1.45, DataGridLengthUnitType.Star)
-            : new DataGridLength(220);
-        ColFindingQuickFix.Width = playerMode
-            ? new DataGridLength(2.35, DataGridLengthUnitType.Star)
-            : new DataGridLength(2.3, DataGridLengthUnitType.Star);
-    }
-
-    private bool IsPlayerUxMode()
-    {
-        return true;
-    }
-
-    private bool IsFocusedPlayerViewEnabled()
-    {
-        return true;
+        ColFindingConfidence.Visibility = Visibility.Collapsed;
+        ColFindingEvidence.Visibility = Visibility.Collapsed;
+        ColFindingImpact.Visibility = Visibility.Collapsed;
+        ColFindingSymptoms.Visibility = Visibility.Collapsed;
+        ColFindingIssue.Width = new DataGridLength(2.2, DataGridLengthUnitType.Star);
+        ColFindingModules.Width = new DataGridLength(1.45, DataGridLengthUnitType.Star);
+        ColFindingQuickFix.Width = new DataGridLength(2.35, DataGridLengthUnitType.Star);
     }
 
     private void UpdatePlayerSettingsHeaderState()
     {
         BtnPlayerSettingsMenu.Visibility = Visibility.Visible;
         MenuToggleControlsPanel.Header = _controlsCollapsed ? "Show Controls Panel" : "Hide Controls Panel";
-    }
-
-    private void ApplyFocusedPlayerChrome()
-    {
-        ExpPriorityQueue.Visibility = Visibility.Collapsed;
-        ExpCriticalRuntimeDrawer.Visibility = Visibility.Collapsed;
-        TabLoadOrderWhy.Visibility = Visibility.Collapsed;
-        TabRuntimeLogs.Visibility = Visibility.Collapsed;
-        TabRuntimeModules.Visibility = Visibility.Collapsed;
-        ExpPriorityQueue.IsExpanded = false;
-        ExpCriticalRuntimeDrawer.IsExpanded = false;
-
-        if (ReferenceEquals(LoadOrderDetailsTabs.SelectedItem, TabLoadOrderWhy))
-        {
-            LoadOrderDetailsTabs.SelectedIndex = 0;
-        }
-
-        if (ReferenceEquals(RuntimeDetailsTabs.SelectedItem, TabRuntimeLogs)
-            || ReferenceEquals(RuntimeDetailsTabs.SelectedItem, TabRuntimeModules))
-        {
-            RuntimeDetailsTabs.SelectedItem = TabRuntimeChains;
-        }
-
-        ApplyLoadOrderFocusedLayout();
-        ApplyRuntimeFocusedLayout();
-        UpdatePlayerSettingsHeaderState();
-    }
-
-    private void ApplyUxMode()
-    {
-        TabScanDiff.Visibility = Visibility.Collapsed;
-        TabIsolationLab.Visibility = Visibility.Collapsed;
-        TabWarnings.Visibility = Visibility.Collapsed;
-        GroupGuidedWorkflow.Visibility = Visibility.Collapsed;
-        GroupAdvancedPaths.Visibility = Visibility.Collapsed;
-        TabLoadOrderExpertBaseline.Visibility = Visibility.Collapsed;
-        ExpAdvancedScanOptions.Visibility = Visibility.Collapsed;
-        ChkAdvancedDetailMode.Visibility = Visibility.Collapsed;
-        ChkLoadOrderMovedOnly.Visibility = Visibility.Collapsed;
-        TxtFindingsToolbarIntro.Text = "Plain-language triage table first. Open Refine Results only when you need filters.";
-        ExpFindingsRefineResults.Header = "Refine Results";
-        ExpFindingsRefineResults.IsExpanded = false;
-        BtnDetailOpenRuntime.Content = "Open Validate";
-        BtnDetailOpenIsolation.Content = "Start Validation";
-        ApplyFindingsColumnVisibility(playerMode: true);
-        ExpCriticalRuntimeDrawer.IsExpanded = false;
-        ApplyFocusedPlayerChrome();
-        SetFindingsControlsCollapsed(collapsed: true, announce: false);
-
-        string desiredConfidenceFloor = "60%";
-        if (!string.Equals(ComboConfidenceFloor.SelectedItem?.ToString(), desiredConfidenceFloor, StringComparison.OrdinalIgnoreCase))
-        {
-            ComboConfidenceFloor.SelectedItem = desiredConfidenceFloor;
-        }
-
-        bool compactSetting = ChkCompactFindingsLayout.IsChecked ?? true;
-        if (ChkCompactFindingsLayout.IsChecked is null)
-        {
-            ChkCompactFindingsLayout.IsChecked = compactSetting;
-        }
-        else
-        {
-            ApplyFindingsDensity(compactSetting);
-        }
-
-        if (ChkAdvancedDetailMode.IsChecked == true)
-        {
-            ChkAdvancedDetailMode.IsChecked = false;
-        }
-
-        if (ReferenceEquals(MainTabs.SelectedItem, TabScanDiff)
-            || ReferenceEquals(MainTabs.SelectedItem, TabWarnings))
-        {
-            MainTabs.SelectedItem = TabFindings;
-        }
-
-        if (ReferenceEquals(MainTabs.SelectedItem, TabIsolationLab))
-        {
-            MainTabs.SelectedItem = TabRuntimeForensics;
-        }
-
-        if (ReferenceEquals(LoadOrderDetailsTabs.SelectedItem, TabLoadOrderExpertBaseline))
-        {
-            LoadOrderDetailsTabs.SelectedIndex = 0;
-        }
-
-        if (ChkLoadOrderMovedOnly.IsChecked == true)
-        {
-            ChkLoadOrderMovedOnly.IsChecked = false;
-        }
-
-        ApplyFocusedPlayerLayout();
-
-        TxtPresetSummary.Text = "Primary workflow: Findings, Load Order, then Validate.";
-        if (_allFindings.Count > 0)
-        {
-            ApplyFilters();
-        }
-        else
-        {
-            UpdateFindingsSeveritySnapshot();
-            UpdateActiveFindingsFiltersSummary();
-        }
-        if (_lastReport is not null)
-        {
-            PopulateLoadOrderSection(_lastReport);
-        }
-        UpdateFindingsHintText();
-        UpdateOnboardingTip();
-        ApplyValidatePlayerSurface();
-        PersistUiPreferences();
     }
 
     private void UpdateFindingsHintText()
@@ -3809,9 +3076,10 @@ public partial class MainWindow : Window
 
     private void UpdateOnboardingTip()
     {
+        object activeTab = GetActiveMainTab();
         BorderOnboardingTip.Visibility = Visibility.Visible;
         GridOnboardingMessage.Visibility = _onboardingTipsDismissed ? Visibility.Collapsed : Visibility.Visible;
-        GridQuickWorkflowSteps.Visibility = !ReferenceEquals(MainTabs.SelectedItem, TabFindings)
+        GridQuickWorkflowSteps.Visibility = !ReferenceEquals(activeTab, TabFindings)
             ? Visibility.Collapsed
             : Visibility.Visible;
         BtnDismissOnboardingTip.IsEnabled = !_isBusy;
@@ -3823,22 +3091,19 @@ public partial class MainWindow : Window
 
     private string BuildOnboardingTipText()
     {
-        if (ReferenceEquals(MainTabs.SelectedItem, TabLoadOrder))
+        object activeTab = GetActiveMainTab();
+
+        if (ReferenceEquals(activeTab, TabLoadOrder))
         {
             return "Load Order: Do These Moves covers only enabled modules that need action. Exact Slots is the authoritative order for the active stack.";
         }
 
-        if (ReferenceEquals(MainTabs.SelectedItem, TabRuntimeForensics))
+        if (ReferenceEquals(activeTab, TabValidate))
         {
             return "Validate: try the current stack in game first. Check game runs only if something actually goes wrong.";
         }
 
-        if (ReferenceEquals(MainTabs.SelectedItem, TabIsolationLab))
-        {
-            return "Validate: only isolate small suspect groups after the problem reproduces in game.";
-        }
-
-        if (ReferenceEquals(MainTabs.SelectedItem, TabFindings))
+        if (ReferenceEquals(activeTab, TabFindings))
         {
             return _compactFindingsLayout
                 ? "Findings: table first. Select a row to open the right-side drawer, then jump directly to Load Order or Validate."
@@ -3846,6 +3111,11 @@ public partial class MainWindow : Window
         }
 
         return "Run scan, review findings, apply load order, then validate the stack in-game.";
+    }
+
+    private object GetActiveMainTab()
+    {
+        return MainTabs.SelectedItem ?? TabFindings;
     }
 
     private void InitializePriorityQueue()
@@ -4130,370 +3400,6 @@ public partial class MainWindow : Window
         return "Low";
     }
 
-    private void InitializeExpertBaselineAudit()
-    {
-        _expertBaselineViolationRows.Clear();
-        _expertBaselineMissingRows.Clear();
-        _expertBaselineViolationRows.Add("No baseline audit yet.");
-        _expertBaselineMissingRows.Add("No baseline audit yet.");
-        TxtExpertBaselineSummary.Text = "Paste an expert load-order list and run an audit after scan.";
-        TxtExpertBaselineSummary.Foreground = ParseBrush("#E2D1B6");
-        BtnRunExpertBaselineAudit.IsEnabled = !_isBusy && _lastReport is not null;
-        BtnClearExpertBaselineAudit.IsEnabled = !_isBusy;
-    }
-
-    private void RunExpertBaselineAudit()
-    {
-        if (_lastReport is null)
-        {
-            TxtExpertBaselineSummary.Text = "Run scan first, then audit against expert baseline.";
-            TxtExpertBaselineSummary.Foreground = ParseBrush("#E7C799");
-            _expertBaselineViolationRows.Clear();
-            _expertBaselineMissingRows.Clear();
-            _expertBaselineViolationRows.Add("No scan loaded.");
-            _expertBaselineMissingRows.Add("No scan loaded.");
-            SetStatus("Run a scan first before running expert baseline audit.");
-            return;
-        }
-
-        EvaluateExpertBaselineAudit(_lastReport, announceStatus: true);
-    }
-
-    private void EvaluateExpertBaselineAudit(ScanReport report, bool announceStatus)
-    {
-        string baselineText = TxtExpertBaselineInput.Text ?? string.Empty;
-        List<string> baselineEntries = ParseExpertBaselineEntries(baselineText);
-        if (baselineEntries.Count == 0)
-        {
-            TxtExpertBaselineSummary.Text = "Paste an expert load-order list first. One mod per line works best.";
-            TxtExpertBaselineSummary.Foreground = ParseBrush("#E2D1B6");
-            _expertBaselineViolationRows.Clear();
-            _expertBaselineMissingRows.Clear();
-            _expertBaselineViolationRows.Add("No baseline entries parsed yet.");
-            _expertBaselineMissingRows.Add("No baseline entries parsed yet.");
-            if (announceStatus)
-            {
-                SetStatus("No expert baseline entries were parsed.");
-            }
-            return;
-        }
-
-        HashSet<string> usedModuleIds = new(StringComparer.OrdinalIgnoreCase);
-        List<(string BaselineText, ModuleManifest Module)> matched = [];
-        List<string> unresolved = [];
-        foreach (string entry in baselineEntries)
-        {
-            ModuleManifest? module = MatchExpertBaselineEntry(entry, report.Modules, usedModuleIds);
-            if (module is null)
-            {
-                unresolved.Add(entry);
-                continue;
-            }
-
-            usedModuleIds.Add(module.Id);
-            matched.Add((entry, module));
-        }
-
-        Dictionary<string, int> currentIndex = report.LoadOrder.CurrentOrder
-            .Select((id, idx) => new { id, idx })
-            .GroupBy(x => x.id, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First().idx, StringComparer.OrdinalIgnoreCase);
-
-        List<(string BaselineText, ModuleManifest Module, int Index)> matchedInCurrentOrder = [];
-        List<(string BaselineText, ModuleManifest Module)> matchedButInactive = [];
-        foreach ((string BaselineText, ModuleManifest Module) item in matched)
-        {
-            if (currentIndex.TryGetValue(item.Module.Id, out int idx))
-            {
-                matchedInCurrentOrder.Add((item.BaselineText, item.Module, idx));
-            }
-            else
-            {
-                matchedButInactive.Add(item);
-            }
-        }
-
-        List<string> violations = [];
-        int totalPairs = 0;
-        for (int i = 0; i < matchedInCurrentOrder.Count; i++)
-        {
-            var left = matchedInCurrentOrder[i];
-            for (int j = i + 1; j < matchedInCurrentOrder.Count; j++)
-            {
-                var right = matchedInCurrentOrder[j];
-                totalPairs++;
-                if (left.Index < right.Index)
-                {
-                    continue;
-                }
-
-                violations.Add(
-                    $"{left.Module.Name} -> {right.Module.Name} expected, current #{left.Index + 1} > #{right.Index + 1}.");
-            }
-        }
-
-        double conformance = totalPairs == 0
-            ? 1.0
-            : Math.Clamp((totalPairs - violations.Count) / (double)totalPairs, 0.0, 1.0);
-        string conformanceText = totalPairs == 0
-            ? "n/a"
-            : $"{conformance:P0}";
-        TxtExpertBaselineSummary.Text =
-            $"Parsed {baselineEntries.Count} baseline entries. Matched {matched.Count} installed ({matchedInCurrentOrder.Count} active). "
-            + $"Pairwise conformance: {conformanceText} ({violations.Count}/{totalPairs} violations).";
-        TxtExpertBaselineSummary.Foreground = violations.Count > 0
-            ? ParseBrush("#FFE0B0")
-            : ParseBrush("#C6F0DD");
-
-        _expertBaselineViolationRows.Clear();
-        foreach (string row in violations.Take(120))
-        {
-            _expertBaselineViolationRows.Add(row);
-        }
-        if (_expertBaselineViolationRows.Count == 0)
-        {
-            _expertBaselineViolationRows.Add("No out-of-order pairs detected among matched baseline modules.");
-        }
-
-        _expertBaselineMissingRows.Clear();
-        foreach (string entry in unresolved.Take(80))
-        {
-            _expertBaselineMissingRows.Add($"Unresolved baseline entry: {entry}");
-        }
-        foreach ((string BaselineText, ModuleManifest Module) item in matchedButInactive.Take(60))
-        {
-            _expertBaselineMissingRows.Add($"Matched but inactive in launcher order: {item.Module.Name} ({item.Module.Id})");
-        }
-        if (_expertBaselineMissingRows.Count == 0)
-        {
-            _expertBaselineMissingRows.Add("No unresolved or inactive baseline entries.");
-        }
-
-        if (announceStatus)
-        {
-            SetStatus(
-                $"Expert baseline audit: {matchedInCurrentOrder.Count}/{baselineEntries.Count} active matches, "
-                + $"{violations.Count} order violation(s).");
-        }
-    }
-
-    private static List<string> ParseExpertBaselineEntries(string baselineText)
-    {
-        if (string.IsNullOrWhiteSpace(baselineText))
-        {
-            return [];
-        }
-
-        List<string> entries = [];
-        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
-        foreach (string raw in baselineText.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
-        {
-            string? candidate = NormalizeBaselineLine(raw);
-            if (string.IsNullOrWhiteSpace(candidate))
-            {
-                continue;
-            }
-
-            if (!seen.Add(candidate))
-            {
-                continue;
-            }
-
-            entries.Add(candidate);
-        }
-
-        return entries;
-    }
-
-    private static string? NormalizeBaselineLine(string rawLine)
-    {
-        if (string.IsNullOrWhiteSpace(rawLine))
-        {
-            return null;
-        }
-
-        string line = rawLine
-            .Replace('\uFEFF', ' ')
-            .Replace('\u200B', ' ')
-            .Trim();
-        line = line.TrimStart(' ', '\t', '-', '.', '*', '•', '·', '—', '–', '…');
-        if (line.Length < 3)
-        {
-            return null;
-        }
-
-        if (line.StartsWith("---", StringComparison.Ordinal)
-            || line.All(ch => ch is '-' or ' ' or '/'))
-        {
-            return null;
-        }
-
-        if (line.Contains("->", StringComparison.Ordinal)
-            || line.Contains('%', StringComparison.Ordinal)
-            || line.Contains('\\', StringComparison.Ordinal)
-            || line.Contains('{', StringComparison.Ordinal)
-            || line.Contains('}', StringComparison.Ordinal))
-        {
-            return null;
-        }
-
-        if (line.EndsWith(':'))
-        {
-            return null;
-        }
-
-        string[] configPrefixes =
-        [
-            "MCM",
-            "ATTENTION",
-            "Go to",
-            "After installing",
-            "Download and install in this order",
-            "Download and install only this",
-            "Enable ",
-            "Disable ",
-            "Do NOT",
-            "System ",
-            "General ",
-            "Messages",
-            "Costs",
-            "Keybindings",
-            "Maximum ",
-            "Minimum ",
-            "Required ",
-            "Daily ",
-            "Weeks ",
-            "Reward ",
-            "Chance ",
-            "Penalty ",
-            "Radius ",
-            "HP Threshold",
-            "Troop Overhaul",
-            "Armor Status GUI",
-            "Posture ",
-            "Wanderer ",
-            "Minor Lords",
-            "Children ",
-            "Role Assignment",
-            "Hero Protection",
-            "Execution Probability",
-            "Clan ",
-            "Assignment Check",
-            "Build Duration",
-            "Rebuild Duration",
-        ];
-        if (configPrefixes.Any(prefix => line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
-        {
-            return null;
-        }
-
-        int firstParen = line.IndexOf(" (", StringComparison.Ordinal);
-        if (firstParen > 0)
-        {
-            line = line[..firstParen].Trim();
-        }
-
-        int descriptiveDash = line.IndexOf(" - ", StringComparison.Ordinal);
-        if (descriptiveDash > 0 && descriptiveDash < line.Length - 3)
-        {
-            string right = line[(descriptiveDash + 3)..];
-            if (right.StartsWith("this ", StringComparison.OrdinalIgnoreCase)
-                || right.StartsWith("also ", StringComparison.OrdinalIgnoreCase)
-                || right.StartsWith("make sure ", StringComparison.OrdinalIgnoreCase)
-                || right.StartsWith("must ", StringComparison.OrdinalIgnoreCase))
-            {
-                line = line[..descriptiveDash].Trim();
-            }
-        }
-
-        line = line.Trim().TrimEnd('.', ',', ';', ':');
-        if (line.Length < 3 || !line.Any(char.IsLetter))
-        {
-            return null;
-        }
-
-        return line;
-    }
-
-    private static ModuleManifest? MatchExpertBaselineEntry(
-        string entry,
-        IReadOnlyList<ModuleManifest> modules,
-        IReadOnlySet<string> usedModuleIds)
-    {
-        string normalizedEntry = NormalizeModuleToken(entry);
-        if (normalizedEntry.Length == 0)
-        {
-            return null;
-        }
-
-        ModuleManifest? best = null;
-        int bestScore = 0;
-        foreach (ModuleManifest module in modules)
-        {
-            if (usedModuleIds.Contains(module.Id))
-            {
-                continue;
-            }
-
-            string id = module.Id.Trim();
-            string name = module.Name.Trim();
-            string normalizedId = NormalizeModuleToken(id);
-            string normalizedName = NormalizeModuleToken(name);
-
-            int score = 0;
-            if (id.Equals(entry, StringComparison.OrdinalIgnoreCase))
-            {
-                score = 120;
-            }
-            else if (name.Equals(entry, StringComparison.OrdinalIgnoreCase))
-            {
-                score = 118;
-            }
-            else if (normalizedId.Equals(normalizedEntry, StringComparison.Ordinal))
-            {
-                score = 112;
-            }
-            else if (normalizedName.Equals(normalizedEntry, StringComparison.Ordinal))
-            {
-                score = 110;
-            }
-            else if (normalizedEntry.Length >= 5
-                     && (normalizedId.Contains(normalizedEntry, StringComparison.Ordinal)
-                         || normalizedName.Contains(normalizedEntry, StringComparison.Ordinal)))
-            {
-                score = 96;
-            }
-            else if (normalizedEntry.Length >= 6
-                     && (normalizedEntry.Contains(normalizedId, StringComparison.Ordinal)
-                         || normalizedEntry.Contains(normalizedName, StringComparison.Ordinal)))
-            {
-                score = 88;
-            }
-
-            if (score > bestScore)
-            {
-                best = module;
-                bestScore = score;
-            }
-        }
-
-        return bestScore >= 88 ? best : null;
-    }
-
-    private static string NormalizeModuleToken(string value)
-    {
-        StringBuilder sb = new(value.Length);
-        foreach (char ch in value)
-        {
-            if (char.IsLetterOrDigit(ch))
-            {
-                sb.Append(char.ToLowerInvariant(ch));
-            }
-        }
-
-        return sb.ToString();
-    }
-
     private void InitializeFilterControls()
     {
         ComboPerspectiveFilter.ItemsSource = new[]
@@ -4617,7 +3523,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        bool keepTablePrimary = IsFocusedPlayerViewEnabled();
+        bool keepTablePrimary = true;
         if (previousSelection is not null && _visibleFindings.Contains(previousSelection))
         {
             GridFindings.SelectedItem = previousSelection;
@@ -4680,9 +3586,7 @@ public partial class MainWindow : Window
         int saveWarnings = _visibleFindings.Count(f => f.Source.Category == ConflictCategory.SaveFileRisk);
         int staticWarnings = Math.Max(0, _visibleFindings.Count - observed - saveWarnings);
         TxtFindingsPlayerStatus.Text = $"Visible findings: {observed} observed evidence, {staticWarnings} scan-only warning(s), {saveWarnings} save compatibility warning(s).";
-        TxtFindingsSeveritySnapshot.Text = IsPlayerUxMode()
-            ? $"Visible mix: {critical} Critical, {high} High, {medium} Medium, {lowOrInfo} Low/Info."
-            : $"Perspective: {perspectiveLabel}. Confidence floor: {floorLabel}. Visible mix: {critical} Critical, {high} High, {medium} Medium, {lowOrInfo} Low/Info.";
+        TxtFindingsSeveritySnapshot.Text = $"Visible mix: {critical} Critical, {high} High, {medium} Medium, {lowOrInfo} Low/Info.";
         TxtFindingsSeveritySnapshot.Foreground = critical > 0
             ? ParseBrush("#FFC8D2")
             : high > 0
@@ -4893,14 +3797,7 @@ public partial class MainWindow : Window
             }
 
             UpdateIsolationWorkflowButtons();
-            if (IsPlayerUxMode())
-            {
-                SelectValidateTab(expandRuntimeEvidence: false);
-            }
-            else
-            {
-                MainTabs.SelectedItem = TabIsolationLab;
-            }
+            SelectValidateTab(expandRuntimeEvidence: false);
             return;
         }
 
@@ -4930,21 +3827,14 @@ public partial class MainWindow : Window
         if (seedMode == IsolationSeedMode.CompatibilityValidation)
         {
             StartIsolationCompatibilityValidation(seedFinding, sourceLabel);
-            if (IsPlayerUxMode())
-            {
-                SelectValidateTab(expandRuntimeEvidence: false);
-            }
-            else
-            {
-                MainTabs.SelectedItem = TabIsolationLab;
-            }
+            SelectValidateTab(expandRuntimeEvidence: false);
             _workflowFixTouched = true;
             UpdateWorkflowRail();
             SetStatus($"Compatibility validation started with {_isolationCandidates.Count} suspect module(s).");
             return;
         }
 
-        TxtIsolationSummary.Text = $"Isolation seed: {ToDisplayCategory(seedFinding.Category)} from {sourceLabel}. Suspect rail includes only player-controlled mods; frameworks and official foundations stay locked.";
+        TxtIsolationFocusSummary.Text = $"Isolation seed: {ToDisplayCategory(seedFinding.Category)} from {sourceLabel}. Suspect rail includes only player-controlled mods; frameworks and official foundations stay locked.";
         SyncIsolationCandidateRows();
         if (_isolationCandidates.Count == 1)
         {
@@ -4961,14 +3851,7 @@ public partial class MainWindow : Window
             TxtIsolationCurrentKeepSet.Text = "No alternate suspect cohort remains.";
             TxtIsolationNextAction.Text = $"Direct validation: keep foundations active, disable only '{culprit}', reproduce once, then re-enable to confirm.";
             UpdateIsolationWorkflowButtons();
-            if (IsPlayerUxMode())
-            {
-                SelectValidateTab(expandRuntimeEvidence: false);
-            }
-            else
-            {
-                MainTabs.SelectedItem = TabIsolationLab;
-            }
+            SelectValidateTab(expandRuntimeEvidence: false);
             _workflowFixTouched = true;
             UpdateWorkflowRail();
             SetStatus($"Isolation narrowed immediately to one suspect module: {culprit}.");
@@ -4976,14 +3859,7 @@ public partial class MainWindow : Window
         }
 
         GenerateNextIsolationStep();
-        if (IsPlayerUxMode())
-        {
-            SelectValidateTab(expandRuntimeEvidence: false);
-        }
-        else
-        {
-            MainTabs.SelectedItem = TabIsolationLab;
-        }
+        SelectValidateTab(expandRuntimeEvidence: false);
         _workflowFixTouched = true;
         UpdateWorkflowRail();
         SetStatus($"Isolation plan started with {_isolationCandidates.Count} suspect module(s); {_isolationFoundationModules.Count} foundation module(s) stay locked.");
@@ -5017,7 +3893,7 @@ public partial class MainWindow : Window
             keepHeader: "Validation Goal",
             issueGoneLabel: "Compatible In Practice",
             issuePersistsLabel: "Issue Reproduced");
-        TxtIsolationSummary.Text = $"Compatibility validation seed: {ToDisplayCategory(seedFinding.Category)} from {sourceLabel}. Start by keeping the suspect mods together and reproducing the relevant gameplay path.";
+        TxtIsolationFocusSummary.Text = $"Compatibility validation seed: {ToDisplayCategory(seedFinding.Category)} from {sourceLabel}. Start by keeping the suspect mods together and reproducing the relevant gameplay path.";
         TxtIsolationFocusSummary.Text = IsPostfixOnlyHarmonyFinding(seedFinding)
             ? "This Harmony overlap is postfix-only. Postfix stacks are usually safe, so the first pass keeps every suspect mod enabled and checks whether the gameplay path is actually stable."
             : "Start with a real compatibility check: keep suspect mods together, run the relevant gameplay path once, and only isolate modules if the issue reproduces.";
@@ -5039,7 +3915,6 @@ public partial class MainWindow : Window
 
         if (stableTogether)
         {
-            TxtIsolationSummary.Text = "Compatibility validation passed: the current suspect stack looks compatible in practice for this repro path.";
             TxtIsolationFocusSummary.Text = "The issue did not reproduce while all suspect mods stayed enabled together. Treat this as compatible in practice for the tested path, then re-check only after updates or new symptoms.";
             TxtIsolationCurrentDisableSet.Text = "No disable step needed.";
             TxtIsolationCurrentFoundationSet.Text = FormatModuleSet(_isolationFoundationModules, 6);
@@ -5059,7 +3934,6 @@ public partial class MainWindow : Window
                 keepHeader: "Why This Matters",
                 issueGoneLabel: "Issue Gone",
                 issuePersistsLabel: "Issue Persists");
-            TxtIsolationSummary.Text = $"Compatibility validation reproduced the issue with only one player-controlled suspect in scope: {culprit}.";
             TxtIsolationFocusSummary.Text = "The issue reproduced with the full stack enabled, but only one player-controlled suspect is in scope. The next step is optional single-mod proof, not another cohort split.";
             TxtIsolationCurrentDisableSet.Text = culprit;
             TxtIsolationCurrentFoundationSet.Text = FormatModuleSet(_isolationFoundationModules, 6);
@@ -5070,7 +3944,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        TxtIsolationSummary.Text = $"Compatibility validation reproduced the issue. Starting cohort isolation across {_isolationCandidates.Count} suspect module(s).";
+        TxtIsolationFocusSummary.Text = $"Compatibility validation reproduced the issue. Starting cohort isolation across {_isolationCandidates.Count} suspect module(s).";
         GenerateNextIsolationStep();
         _workflowFixTouched = true;
         UpdateWorkflowRail();
@@ -5171,7 +4045,6 @@ public partial class MainWindow : Window
         _lastValidationGoalText = "-";
         _lastValidationModulesText = "-";
 
-        TxtIsolationSummary.Text = summary;
         TxtIsolationFocusSummary.Text = "Isolation Lab tests player-controlled suspect cohorts while keeping frameworks and official foundations active.";
         TxtIsolationCurrentDisableSet.Text = "-";
         TxtIsolationCurrentFoundationSet.Text = "No locked foundations.";
@@ -5221,7 +4094,6 @@ public partial class MainWindow : Window
             if (_isolationCandidates.Count == 1)
             {
                 string culprit = _isolationCandidates[0];
-                TxtIsolationSummary.Text = $"Isolation converged to one suspect module: {culprit}.";
                 TxtIsolationFocusSummary.Text = "Binary isolation is complete. Only one player-controlled suspect remains after keeping foundations intact.";
                 TxtIsolationCurrentDisableSet.Text = culprit;
                 TxtIsolationCurrentFoundationSet.Text = FormatModuleSet(_isolationFoundationModules, 6);
@@ -5231,7 +4103,6 @@ public partial class MainWindow : Window
             }
             else
             {
-                TxtIsolationSummary.Text = "Isolation branch returned no candidates. Reset and retry with a narrower seed.";
                 TxtIsolationFocusSummary.Text = "The last branch eliminated every player-controlled suspect. That usually means the seed cluster was too broad or the repro changed.";
                 TxtIsolationCurrentDisableSet.Text = "-";
                 TxtIsolationCurrentFoundationSet.Text = FormatModuleSet(_isolationFoundationModules, 6);
@@ -5244,7 +4115,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        TxtIsolationSummary.Text = $"Isolation step {completedStep} recorded: {outcome}. {_isolationCandidates.Count} suspect module(s) remain.";
+        TxtIsolationFocusSummary.Text = $"Isolation step {completedStep} recorded: {outcome}. {_isolationCandidates.Count} suspect module(s) remain.";
         GenerateNextIsolationStep();
         _workflowFixTouched = true;
         UpdateWorkflowRail();
@@ -5579,9 +4450,9 @@ public partial class MainWindow : Window
     private void UpdateIsolationWorkflowButtons()
     {
         bool canSeed = !_isBusy && _allFindings.Count > 0;
-        BtnStartIsolationFromSelectedFinding.IsEnabled = canSeed;
-        BtnStartIsolationFromTopRuntime.IsEnabled = canSeed;
-        BtnResetIsolation.IsEnabled = !_isBusy;
+        BtnValidateUseSelectedFinding.IsEnabled = canSeed;
+        BtnPlayerRuntimeUseTopWarning.IsEnabled = canSeed;
+        BtnValidateResetCurrent.IsEnabled = !_isBusy;
 
         bool canRespond = !_isBusy && _isolationPendingStep is not null;
         BtnIsolationIssueGone.IsEnabled = canRespond;
@@ -5791,9 +4662,8 @@ public partial class MainWindow : Window
         BtnApplyLoadOrder.IsEnabled = !busy;
         BtnExportJson.IsEnabled = !busy && _lastReport is not null;
         BtnExportMd.IsEnabled = !busy && _lastReport is not null;
-        BtnToggleLiveRuntimeWatch.IsEnabled = !busy && _lastReport is not null;
-        BtnRunExpertBaselineAudit.IsEnabled = !busy && _lastReport is not null;
-        BtnClearExpertBaselineAudit.IsEnabled = !busy;
+        BtnValidateRuntimeEmptyWatch.IsEnabled = !busy && _lastReport is not null;
+        BtnPlayerRuntimeWatchLocal.IsEnabled = !busy && _lastReport is not null;
         BtnPresetCrashTriage.IsEnabled = !busy && _lastReport is not null;
         BtnPresetLoadOrderAudit.IsEnabled = !busy && _lastReport is not null;
         BtnPresetRuntimeValidation.IsEnabled = !busy && _lastReport is not null;
@@ -5882,10 +4752,14 @@ public partial class MainWindow : Window
             StopLiveRuntimeWatchInfrastructure();
         }
 
-        BtnToggleLiveRuntimeWatch.IsEnabled = canRun;
-        BtnToggleLiveRuntimeWatch.Content = _liveRuntimeWatchEnabled
+        string buttonText = _liveRuntimeWatchEnabled
             ? "Stop Live Session Watch"
             : "Start Live Session Watch";
+
+        BtnValidateRuntimeEmptyWatch.IsEnabled = canRun;
+        BtnValidateRuntimeEmptyWatch.Content = buttonText;
+        BtnPlayerRuntimeWatchLocal.IsEnabled = canRun;
+        BtnPlayerRuntimeWatchLocal.Content = buttonText;
     }
 
     private async Task PollLiveRuntimeWatchAsync()
@@ -6135,20 +5009,6 @@ public partial class MainWindow : Window
             || fileName.Equals("crashlist.txt", StringComparison.OrdinalIgnoreCase);
     }
 
-    private void InitializeDiffControls()
-    {
-        TxtDiffSummary.Text = "Run another scan to compare what appeared or disappeared.";
-        TxtDiffNewCount.Text = "0";
-        TxtDiffResolvedCount.Text = "0";
-        TxtDiffSeverityCount.Text = "0";
-        _diffNewRows.Clear();
-        _diffResolvedRows.Clear();
-        _diffSeverityRows.Clear();
-        _diffNewRows.Add("No baseline yet.");
-        _diffResolvedRows.Add("No baseline yet.");
-        _diffSeverityRows.Add("No baseline yet.");
-    }
-
     private void UpdateRuntimeEvidenceSummary(ScanReport report, bool runtimeEvidenceRequested)
     {
         int runtimeConfirmed = report.Conflicts.Count(IsRuntimeConfirmed);
@@ -6178,115 +5038,6 @@ public partial class MainWindow : Window
         TxtRuntimeEvidenceSummary.Text = runtimeEvidenceRequested
             ? "Runtime evidence mode ran, but no Harmony runtime-confirmed findings were parsed. Generate fresh Harmony logs and re-scan."
             : "No runtime-confirmed findings in this scan. Use Collect Runtime Evidence after a gameplay session.";
-    }
-
-    private void PopulateScanDiff(ScanReport? previousReport, ScanReport currentReport)
-    {
-        _diffNewRows.Clear();
-        _diffResolvedRows.Clear();
-        _diffSeverityRows.Clear();
-
-        if (previousReport is null)
-        {
-            TxtDiffSummary.Text = "No prior scan in this app session. Run another scan after making changes to see a diff.";
-            TxtDiffNewCount.Text = "0";
-            TxtDiffResolvedCount.Text = "0";
-            TxtDiffSeverityCount.Text = "0";
-            _diffNewRows.Add("No baseline yet.");
-            _diffResolvedRows.Add("No baseline yet.");
-            _diffSeverityRows.Add("No baseline yet.");
-            return;
-        }
-
-        Dictionary<string, ConflictFinding> previousByKey = previousReport.Conflicts
-            .GroupBy(BuildFindingIdentityKey, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, ConflictFinding> currentByKey = currentReport.Conflicts
-            .GroupBy(BuildFindingIdentityKey, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
-
-        List<string> newKeys = currentByKey.Keys
-            .Except(previousByKey.Keys, StringComparer.OrdinalIgnoreCase)
-            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        List<string> resolvedKeys = previousByKey.Keys
-            .Except(currentByKey.Keys, StringComparer.OrdinalIgnoreCase)
-            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        List<string> severityChangedKeys = currentByKey.Keys
-            .Intersect(previousByKey.Keys, StringComparer.OrdinalIgnoreCase)
-            .Where(key => currentByKey[key].Severity != previousByKey[key].Severity)
-            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        foreach (string key in newKeys.Take(80))
-        {
-            _diffNewRows.Add($"NEW {FormatDiffFinding(currentByKey[key])}");
-        }
-        foreach (string key in resolvedKeys.Take(80))
-        {
-            _diffResolvedRows.Add($"RESOLVED {FormatDiffFinding(previousByKey[key])}");
-        }
-        foreach (string key in severityChangedKeys.Take(80))
-        {
-            ConflictFinding before = previousByKey[key];
-            ConflictFinding after = currentByKey[key];
-            _diffSeverityRows.Add(
-                $"{ToDisplayCategory(after.Category)} | {before.Severity} -> {after.Severity} | {FormatModulesForDiff(after)}");
-        }
-
-        if (_diffNewRows.Count == 0)
-        {
-            _diffNewRows.Add("No new findings.");
-        }
-        if (_diffResolvedRows.Count == 0)
-        {
-            _diffResolvedRows.Add("No resolved findings.");
-        }
-        if (_diffSeverityRows.Count == 0)
-        {
-            _diffSeverityRows.Add("No severity changes.");
-        }
-
-        TxtDiffNewCount.Text = newKeys.Count.ToString();
-        TxtDiffResolvedCount.Text = resolvedKeys.Count.ToString();
-        TxtDiffSeverityCount.Text = severityChangedKeys.Count.ToString();
-        TxtDiffSummary.Text = newKeys.Count == 0 && resolvedKeys.Count == 0 && severityChangedKeys.Count == 0
-            ? "No finding-level differences from previous scan. Current profile is stable across scans."
-            : $"Compared to previous scan: +{newKeys.Count} new, -{resolvedKeys.Count} resolved, {severityChangedKeys.Count} severity changes.";
-    }
-
-    private static string BuildFindingIdentityKey(ConflictFinding finding)
-    {
-        string modules = string.Join("|", finding.ModuleIds
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-        string reason = finding.Reason.Trim();
-        return $"{finding.Category}|{modules}|{reason}";
-    }
-
-    private static string FormatDiffFinding(ConflictFinding finding)
-    {
-        return $"[{finding.Severity}] {ToDisplayCategory(finding.Category)} | {FormatModulesForDiff(finding)}";
-    }
-
-    private static string FormatModulesForDiff(ConflictFinding finding)
-    {
-        if (finding.ModuleIds.Count == 0)
-        {
-            return "modules: -";
-        }
-
-        return finding.ModuleIds.Count <= 3
-            ? $"modules: {string.Join(", ", finding.ModuleIds)}"
-            : $"modules: {string.Join(", ", finding.ModuleIds.Take(3))} (+{finding.ModuleIds.Count - 3})";
-    }
-
-    private enum RuntimeDrawerView
-    {
-        Chains,
-        Logs,
-        Modules,
     }
 
     private sealed class FindingRow
