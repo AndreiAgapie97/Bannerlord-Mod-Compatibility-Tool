@@ -47,6 +47,54 @@ public enum ModSourceType
     SteamWorkshop,
 }
 
+public enum FindingEvidenceSource
+{
+    Unknown,
+    StaticMetadata,
+    RuntimeLog,
+    SaveScan,
+    LauncherOrder,
+    HarmonyGraph,
+    RuntimeCluster,
+    DuplicateScanner,
+}
+
+public enum FindingEvidenceKind
+{
+    Unknown,
+    Advisory,
+    OrderAmbiguity,
+    OwnershipClash,
+    MissingSaveMod,
+    RuntimeLoaderIssue,
+    DependencyRule,
+    BootstrapRule,
+    StabilityPreference,
+    Pin,
+    RuntimeModuleDrift,
+}
+
+public enum FindingEvidenceScope
+{
+    Unknown,
+    Module,
+    Method,
+    Save,
+    Session,
+}
+
+public enum LoadOrderRationaleKind
+{
+    Unknown,
+    Dependency,
+    Bootstrap,
+    StabilityPreference,
+    Pin,
+    DisabledInstalled,
+    AlreadyGood,
+    ManualReview,
+}
+
 public enum LoadOrderConstraint
 {
     LoadBeforeThis,
@@ -136,6 +184,8 @@ public sealed record ConflictFinding
     public string? LikelyInGameOutcome { get; init; }
     public string? Recommendation { get; init; }
     public IReadOnlyList<string> Evidence { get; init; } = [];
+    [JsonIgnore]
+    public FindingEvidenceDescriptor? StructuredEvidence { get; init; }
 }
 
 public sealed record LoadOrderMove(
@@ -152,6 +202,24 @@ public sealed record LoadOrderRecommendation
     public IReadOnlyList<string> Warnings { get; init; } = [];
     public IReadOnlyList<string> Rationale { get; init; } = [];
     public double Confidence { get; init; } = 0.50;
+    [JsonIgnore]
+    public IReadOnlyList<LoadOrderModuleRationale> ModuleRationales { get; init; } = [];
+}
+
+public sealed record FindingEvidenceDescriptor
+{
+    public required FindingEvidenceScope Scope { get; init; }
+    public IReadOnlyList<FindingEvidenceSource> Sources { get; init; } = [];
+    public IReadOnlyList<FindingEvidenceKind> Kinds { get; init; } = [];
+    public IReadOnlyDictionary<string, string> Details { get; init; } = new Dictionary<string, string>();
+}
+
+public sealed record LoadOrderModuleRationale
+{
+    public required string ModuleId { get; init; }
+    public required LoadOrderRationaleKind PrimaryKind { get; init; }
+    public IReadOnlyList<LoadOrderRationaleKind> Kinds { get; init; } = [];
+    public required string Summary { get; init; }
 }
 
 public sealed record SaveFileInsight

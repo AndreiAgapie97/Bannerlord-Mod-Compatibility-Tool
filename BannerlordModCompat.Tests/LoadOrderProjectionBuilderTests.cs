@@ -48,6 +48,91 @@ public class LoadOrderProjectionBuilderTests
     }
 
     [Fact]
+    public void BuildEnabledSingleplayerProjection_PreservesPlannerRationaleOnVisibleRows()
+    {
+        LoadOrderRecommendation source = new()
+        {
+            CurrentOrder = ["Native", "Bannerlord.Diplomacy"],
+            SuggestedOrder = ["Native", "Bannerlord.Diplomacy"],
+            Moves = [],
+            Warnings = [],
+            Rationale = [],
+            Confidence = 0.75,
+            ModuleRationales =
+            [
+                new LoadOrderModuleRationale
+                {
+                    ModuleId = "Native",
+                    PrimaryKind = LoadOrderRationaleKind.Bootstrap,
+                    Kinds = [LoadOrderRationaleKind.Bootstrap],
+                    Summary = "Position is shaped by the core/framework bootstrap sequence.",
+                },
+                new LoadOrderModuleRationale
+                {
+                    ModuleId = "Bannerlord.Diplomacy",
+                    PrimaryKind = LoadOrderRationaleKind.StabilityPreference,
+                    Kinds = [LoadOrderRationaleKind.StabilityPreference],
+                    Summary = "Position is kept stable because this module overlaps with other active modules.",
+                },
+            ],
+        };
+
+        PlayerLoadOrderProjection projection = PlayerLoadOrderProjectionBuilder.BuildEnabledSingleplayerProjection(
+            source,
+            modules:
+            [
+                BuildModule("Native", official: true),
+                BuildModule("Bannerlord.Diplomacy"),
+            ],
+            findings: []);
+
+        PlayerLoadOrderProjectionRow row = Assert.Single(projection.Rows, r => r.ModuleId == "Bannerlord.Diplomacy");
+        Assert.Equal(LoadOrderRationaleKind.StabilityPreference, row.PrimaryReasonKind);
+        Assert.Contains("overlaps", row.ReasonSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.True(row.IsCustom);
+    }
+
+    [Fact]
+    public void BuildEnabledSingleplayerProjection_MarksInactiveRowsAsDisabledInstalled()
+    {
+        LoadOrderRecommendation source = new()
+        {
+            CurrentOrder = ["Native", "Sandbox", "StoryMode"],
+            SuggestedOrder = ["Native", "Sandbox", "StoryMode", "FastMode"],
+            Moves = [],
+            Warnings = [],
+            Rationale = [],
+            Confidence = 0.80,
+            ModuleRationales =
+            [
+                new LoadOrderModuleRationale
+                {
+                    ModuleId = "FastMode",
+                    PrimaryKind = LoadOrderRationaleKind.Bootstrap,
+                    Kinds = [LoadOrderRationaleKind.Bootstrap],
+                    Summary = "Position is shaped by the core/framework bootstrap sequence.",
+                },
+            ],
+        };
+
+        PlayerLoadOrderProjection projection = PlayerLoadOrderProjectionBuilder.BuildEnabledSingleplayerProjection(
+            source,
+            modules:
+            [
+                BuildModule("Native", official: true),
+                BuildModule("Sandbox", official: true),
+                BuildModule("StoryMode", official: true),
+                BuildModule("FastMode", official: true),
+            ],
+            findings: []);
+
+        PlayerLoadOrderProjectionRow row = Assert.Single(projection.InactiveInstalledRows);
+        Assert.Equal("FastMode", row.ModuleId);
+        Assert.True(row.IsInactiveInstalled);
+        Assert.Equal(LoadOrderRationaleKind.DisabledInstalled, row.PrimaryReasonKind);
+    }
+
+    [Fact]
     public void TryApplySuggestedOrder_PreservesDisabledModulePositions_WhenApplyingEnabledOnlyOrder()
     {
         string tempRoot = Path.Combine(Path.GetTempPath(), "BannerlordModCompatTests", Guid.NewGuid().ToString("N"));
@@ -94,5 +179,24 @@ public class LoadOrderProjectionBuilderTests
                 Directory.Delete(tempRoot, recursive: true);
             }
         }
+    }
+
+    private static ModuleManifest BuildModule(string id, bool official = false, bool framework = false)
+    {
+        return new ModuleManifest
+        {
+            Id = id,
+            Name = id,
+            Version = "1.0.0",
+            RootPath = $@"C:\Test\{id}",
+            SubModulePath = $@"C:\Test\{id}\SubModule.xml",
+            SourceType = ModSourceType.Local,
+            IsOfficial = official,
+            IsFramework = framework,
+            Dependencies = [],
+            ExplicitIncompatibilities = [],
+            XmlEntities = [],
+            Dlls = [],
+        };
     }
 }

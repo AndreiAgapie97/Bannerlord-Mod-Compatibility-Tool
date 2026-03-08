@@ -58,11 +58,16 @@ public sealed class LoadOrderPlanner
             edges[id] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             inDegree[id] = 0;
         }
+        Dictionary<string, HashSet<LoadOrderRationaleKind>> rationaleKindsByModule = moduleIds
+            .ToDictionary(
+                id => id,
+                _ => new HashSet<LoadOrderRationaleKind>(),
+                StringComparer.OrdinalIgnoreCase);
 
         List<string> warnings = [];
-        int dependencyEdges = AddDependencyEdges(modules, moduleIds, edges, inDegree, warnings);
-        int canonicalEdges = AddCanonicalBootstrapEdges(moduleIds, currentIndex, edges, inDegree, warnings);
-        int stabilityEdges = AddConflictStabilityEdges(moduleIds, currentIndex, findings, edges, inDegree);
+        int dependencyEdges = AddDependencyEdges(modules, moduleIds, edges, inDegree, warnings, rationaleKindsByModule);
+        int canonicalEdges = AddCanonicalBootstrapEdges(moduleIds, currentIndex, edges, inDegree, warnings, rationaleKindsByModule);
+        int stabilityEdges = AddConflictStabilityEdges(moduleIds, currentIndex, findings, edges, inDegree, rationaleKindsByModule);
 
         PriorityQueue<string, (int tier, int current, string alpha)> queue = new();
         foreach (KeyValuePair<string, int> node in inDegree.Where(x => x.Value == 0))
@@ -121,12 +126,13 @@ public sealed class LoadOrderPlanner
 
         if (pinnedMods.Count > 0)
         {
-            ApplyPins(result, currentOrder, pinnedMods, warnings);
+            ApplyPins(result, currentOrder, pinnedMods, warnings, rationaleKindsByModule);
             ValidatePinnedOrder(result, modules, warnings);
         }
 
         List<LoadOrderMove> moves = BuildMoves(currentOrder, result);
         List<string> rationale = BuildRationale(dependencyEdges, canonicalEdges, stabilityEdges, pinnedMods.Count, hadCycle);
+        List<LoadOrderModuleRationale> moduleRationales = BuildModuleRationales(moduleIds, rationaleKindsByModule);
         double confidence = ComputeConfidence(
             dependencyEdges,
             canonicalEdges,
@@ -144,6 +150,7 @@ public sealed class LoadOrderPlanner
             Warnings = warnings,
             Rationale = rationale,
             Confidence = confidence,
+            ModuleRationales = moduleRationales,
         };
     }
 
@@ -152,7 +159,8 @@ public sealed class LoadOrderPlanner
         IReadOnlySet<string> moduleIds,
         IReadOnlyDictionary<string, HashSet<string>> edges,
         IDictionary<string, int> inDegree,
-        List<string> warnings
+        List<string> warnings,
+        IReadOnlyDictionary<string, HashSet<LoadOrderRationaleKind>> rationaleKindsByModule
     )
     {
         int added = 0;
@@ -172,6 +180,8 @@ public sealed class LoadOrderPlanner
                     ? dep.Id
                     : module.Id;
 
+                MarkRationale(rationaleKindsByModule, module.Id, LoadOrderRationaleKind.Dependency);
+                MarkRationale(rationaleKindsByModule, dep.Id, LoadOrderRationaleKind.Dependency);
                 if (TryAddEdge(from, to, dep.Optional, edges, inDegree, warnings))
                 {
                     added++;
@@ -187,7 +197,8 @@ public sealed class LoadOrderPlanner
         IReadOnlyDictionary<string, int> currentIndex,
         IReadOnlyDictionary<string, HashSet<string>> edges,
         IDictionary<string, int> inDegree,
-        List<string> warnings
+        List<string> warnings,
+        IReadOnlyDictionary<string, HashSet<LoadOrderRationaleKind>> rationaleKindsByModule
     )
     {
         List<string> chain = [];
@@ -209,6 +220,8 @@ public sealed class LoadOrderPlanner
         {
             string from = chain[i];
             string to = chain[i + 1];
+            MarkRationale(rationaleKindsByModule, from, LoadOrderRationaleKind.Bootstrap);
+            MarkRationale(rationaleKindsByModule, to, LoadOrderRationaleKind.Bootstrap);
             if (TryAddEdge(from, to, optional: true, edges, inDegree, warnings))
             {
                 added++;
@@ -223,7 +236,8 @@ public sealed class LoadOrderPlanner
         IReadOnlyDictionary<string, int> currentIndex,
         IReadOnlyList<ConflictFinding>? findings,
         IReadOnlyDictionary<string, HashSet<string>> edges,
-        IDictionary<string, int> inDegree
+        IDictionary<string, int> inDegree,
+        IReadOnlyDictionary<string, HashSet<LoadOrderRationaleKind>> rationaleKindsByModule
     )
     {
         if (findings is null || findings.Count == 0)
@@ -238,6 +252,10 @@ public sealed class LoadOrderPlanner
                 .Where(id => moduleIds.Contains(id) && currentIndex.ContainsKey(id))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            foreach (string participant in participants)
+            {
+                MarkRationale(rationaleKindsByModule, participant, LoadOrderRationaleKind.StabilityPreference);
+            }
 
             for (int i = 0; i < participants.Length; i++)
             {
@@ -302,7 +320,8 @@ public sealed class LoadOrderPlanner
         List<string> suggestedOrder,
         IReadOnlyList<string> currentOrder,
         IReadOnlyList<string> pinnedMods,
-        List<string> warnings
+        List<string> warnings,
+        IReadOnlyDictionary<string, HashSet<LoadOrderRationaleKind>> rationaleKindsByModule
     )
     {
         Dictionary<string, int> currentIndex = currentOrder
@@ -319,6 +338,7 @@ public sealed class LoadOrderPlanner
                 continue;
             }
 
+            MarkRationale(rationaleKindsByModule, pin, LoadOrderRationaleKind.Pin);
             suggestedOrder.RemoveAt(existingIndex);
             int targetIndex = currentIndex.TryGetValue(pin, out int idx) ? idx : suggestedOrder.Count;
             targetIndex = Math.Clamp(targetIndex, 0, suggestedOrder.Count);
@@ -406,6 +426,34 @@ public sealed class LoadOrderPlanner
         return lines;
     }
 
+    private static List<LoadOrderModuleRationale> BuildModuleRationales(
+        IReadOnlySet<string> moduleIds,
+        IReadOnlyDictionary<string, HashSet<LoadOrderRationaleKind>> rationaleKindsByModule)
+    {
+        return moduleIds
+            .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+            .Select(moduleId =>
+            {
+                List<LoadOrderRationaleKind> kinds = rationaleKindsByModule.TryGetValue(moduleId, out HashSet<LoadOrderRationaleKind>? values)
+                    ? values.OrderBy(GetRationalePriority).ToList()
+                    : [];
+                if (kinds.Count == 0)
+                {
+                    kinds.Add(LoadOrderRationaleKind.AlreadyGood);
+                }
+
+                LoadOrderRationaleKind primaryKind = kinds[0];
+                return new LoadOrderModuleRationale
+                {
+                    ModuleId = moduleId,
+                    PrimaryKind = primaryKind,
+                    Kinds = kinds,
+                    Summary = BuildModuleRationaleSummary(primaryKind, kinds),
+                };
+            })
+            .ToList();
+    }
+
     private static double ComputeConfidence(
         int dependencyEdges,
         int canonicalEdges,
@@ -429,6 +477,42 @@ public sealed class LoadOrderPlanner
         }
 
         return Math.Clamp(confidence, 0.20, 0.98);
+    }
+
+    private static string BuildModuleRationaleSummary(
+        LoadOrderRationaleKind primaryKind,
+        IReadOnlyList<LoadOrderRationaleKind> kinds)
+    {
+        bool hasDependency = kinds.Contains(LoadOrderRationaleKind.Dependency);
+        bool hasBootstrap = kinds.Contains(LoadOrderRationaleKind.Bootstrap);
+        bool hasStability = kinds.Contains(LoadOrderRationaleKind.StabilityPreference);
+
+        if (primaryKind == LoadOrderRationaleKind.Pin)
+        {
+            return "Pinned near the current slot while the planner preserved surrounding rules where possible.";
+        }
+
+        if (hasDependency && hasBootstrap)
+        {
+            return "Position is shaped by both dependency metadata and the core/framework bootstrap sequence.";
+        }
+
+        if (hasDependency)
+        {
+            return "Position is shaped by declared dependency/order constraints from module metadata.";
+        }
+
+        if (hasBootstrap)
+        {
+            return "Position is shaped by the core/framework bootstrap sequence.";
+        }
+
+        if (hasStability)
+        {
+            return "Position is kept stable because this module overlaps with other active modules.";
+        }
+
+        return "No stronger dependency or bootstrap rule forced a different slot for this module.";
     }
 
     private static List<LoadOrderMove> BuildMoves(IReadOnlyList<string> currentOrder, IReadOnlyList<string> suggestedOrder)
@@ -490,5 +574,30 @@ public sealed class LoadOrderPlanner
         }
 
         return map;
+    }
+
+    private static void MarkRationale(
+        IReadOnlyDictionary<string, HashSet<LoadOrderRationaleKind>> rationaleKindsByModule,
+        string moduleId,
+        LoadOrderRationaleKind kind)
+    {
+        if (rationaleKindsByModule.TryGetValue(moduleId, out HashSet<LoadOrderRationaleKind>? kinds))
+        {
+            kinds.Add(kind);
+        }
+    }
+
+    private static int GetRationalePriority(LoadOrderRationaleKind kind)
+    {
+        return kind switch
+        {
+            LoadOrderRationaleKind.Pin => 0,
+            LoadOrderRationaleKind.Dependency => 1,
+            LoadOrderRationaleKind.Bootstrap => 2,
+            LoadOrderRationaleKind.StabilityPreference => 3,
+            LoadOrderRationaleKind.DisabledInstalled => 4,
+            LoadOrderRationaleKind.ManualReview => 5,
+            _ => 6,
+        };
     }
 }

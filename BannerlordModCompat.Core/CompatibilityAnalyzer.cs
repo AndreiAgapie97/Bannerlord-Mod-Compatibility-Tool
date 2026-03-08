@@ -103,6 +103,48 @@ public sealed class CompatibilityAnalyzer
 
     public ScanReport Analyze(ScanOptions options, IProgress<ScanProgressUpdate>? progress)
     {
+        ScanPipelineContext context = BuildPipelineContext(options, progress);
+        List<ConflictFinding> conflicts = CollectFindings(context, options, progress);
+        IReadOnlyList<SaveFileInsight> saveInsights = CollectSaveInsights(context, options, conflicts, progress);
+        List<ConflictFinding> filteredConflicts = FinalizeFindings(conflicts, context.Modules, options, context.Warnings, progress);
+
+        ReportProgress(progress, 98, "Building recommended load order...");
+        LoadOrderRecommendation fullRecommendation = _loadOrderPlanner.Build(
+            context.Modules,
+            context.CurrentOrder,
+            options.PinnedMods,
+            filteredConflicts
+        );
+        context.Warnings.AddRange(fullRecommendation.Warnings);
+
+        LoadOrderRecommendation projectedRecommendation = ProjectLoadOrder(fullRecommendation, context.ScopedModules, options.CustomModsOnlyFocus);
+        List<ConflictFinding> playerFacingConflicts = ProjectPlayerFacingFindings(filteredConflicts, context.Modules);
+        if (options.AutoApplyLoadOrder)
+        {
+            ReportProgress(progress, 99, "Applying suggested load order...");
+            IReadOnlyList<string> applyOrder = BuildApplySuggestedOrder(fullRecommendation.CurrentOrder, projectedRecommendation.SuggestedOrder);
+            _launcherData.TryApplySuggestedOrder(context.Discovered.LauncherDataPath, applyOrder, context.Warnings);
+        }
+
+        ScanReport report = new()
+        {
+            GeneratedAtUtc = DateTimeOffset.UtcNow,
+            GameVersion = options.GameVersion,
+            ScannedModuleRoots = context.Discovered.ModuleRoots,
+            ScannedWorkshopRoot = context.Discovered.WorkshopRoot,
+            OverallState = InferState(playerFacingConflicts),
+            Modules = context.ScopedModules,
+            Conflicts = playerFacingConflicts.OrderByDescending(c => c.Severity).ThenByDescending(c => c.Confidence).ToList(),
+            LoadOrder = projectedRecommendation,
+            SaveFiles = saveInsights,
+            Warnings = context.Warnings,
+        };
+        ReportProgress(progress, 100, "Scan complete.");
+        return report;
+    }
+
+    private ScanPipelineContext BuildPipelineContext(ScanOptions options, IProgress<ScanProgressUpdate>? progress)
+    {
         ReportProgress(progress, 2, "Discovering scan paths...");
         DiscoveredPaths discovered = PathDiscovery.Discover(options);
         List<string> warnings = [.. discovered.Warnings];
@@ -112,15 +154,13 @@ public sealed class CompatibilityAnalyzer
         IReadOnlyList<ModuleManifest> modules = _moduleScanner.Scan(
             discovered.ModuleRoots,
             discovered.WorkshopRoot,
-            warnings
-        );
+            warnings);
 
         ReportProgress(progress, 14, "Reading launcher load order...");
         IReadOnlyList<string> currentOrder = _launcherData.ReadCurrentOrder(
             discovered.LauncherDataPath,
             modules,
-            warnings
-        );
+            warnings);
 
         IReadOnlyList<ModuleManifest> scopedModules = options.CustomModsOnlyFocus
             ? modules.Where(m => m.IsCustom).ToList()
@@ -129,117 +169,110 @@ public sealed class CompatibilityAnalyzer
             ? currentOrder.Where(id => scopedModules.Any(m => m.Id.Equals(id, StringComparison.OrdinalIgnoreCase))).ToList()
             : currentOrder;
 
-        List<ConflictFinding> conflicts = [];
-        ReportProgress(progress, 22, "Checking dependency and load-order rules...");
-        conflicts.AddRange(AnalyzeDependencies(
-            modules,
-            currentOrder,
-            options.CustomModsOnlyFocus,
-            options.IncludeDataNoiseFindings
-        ));
-        ReportProgress(progress, 34, "Running static Harmony patch analysis...");
-        conflicts.AddRange(_harmonyPatchStaticAnalyzer.Analyze(modules, options.CustomModsOnlyFocus, warnings));
-        ReportProgress(progress, 42, "Reading Harmony runtime logs (if available)...");
-        conflicts.AddRange(_harmonyPatchAnalyzer.Analyze(
-            discovered.HarmonyLogRoots,
-            modules,
-            options.CustomModsOnlyFocus,
-            warnings
-        ));
-        ReportProgress(progress, 54, "Analyzing code-level behavior/model overlap...");
-        conflicts.AddRange(_codeConflictAnalyzer.Analyze(modules, options.CustomModsOnlyFocus, warnings));
-        ReportProgress(progress, 62, "Analyzing runtime session logs (launcher/watchdog/rgl)...");
-        conflicts.AddRange(_runtimeSessionLogAnalyzer.Analyze(
-            modules,
-            currentOrder,
-            options.CustomModsOnlyFocus,
-            warnings
-        ));
-        if (options.IncludeDataNoiseFindings)
-        {
-            ReportProgress(progress, 68, "Checking DLL collisions...");
-            conflicts.AddRange(AnalyzeDllCollisions(modules, options.CustomModsOnlyFocus));
-            ReportProgress(progress, 74, "Checking XML and ModuleData collisions...");
-            conflicts.AddRange(AnalyzeXmlCollisions(modules, options.CustomModsOnlyFocus));
-            conflicts.AddRange(AnalyzeModuleDataFileCollisions(modules, options.CustomModsOnlyFocus, warnings));
-        }
-        else
-        {
-            ReportProgress(progress, 74, "Skipping optional data-noise collision checks...");
-            warnings.Add("Data-noise findings are disabled by default: skipping dependency version mismatch, DLL collision, and XML/ModuleData overlap checks.");
-        }
-        ReportProgress(progress, 82, "Checking game API assembly reference mismatches...");
-        conflicts.AddRange(AnalyzeAssemblyReferenceMismatches(modules, options.CustomModsOnlyFocus, warnings));
-
         if (options.CustomModsOnlyFocus)
         {
             warnings.Add("Custom-mod focus enabled: official game modules and common framework modules are hidden in findings.");
         }
 
-        IReadOnlyList<SaveFileInsight> saveInsights = [];
-        if (options.IncludeSaveFileAnalysis)
+        return new ScanPipelineContext(discovered, warnings, modules, currentOrder, scopedModules, scopedOrder);
+    }
+
+    private List<ConflictFinding> CollectFindings(
+        ScanPipelineContext context,
+        ScanOptions options,
+        IProgress<ScanProgressUpdate>? progress)
+    {
+        List<ConflictFinding> conflicts = [];
+
+        ReportProgress(progress, 22, "Checking dependency and load-order rules...");
+        conflicts.AddRange(AnalyzeDependencies(
+            context.Modules,
+            context.CurrentOrder,
+            options.CustomModsOnlyFocus,
+            options.IncludeDataNoiseFindings));
+
+        ReportProgress(progress, 34, "Running static Harmony patch analysis...");
+        conflicts.AddRange(_harmonyPatchStaticAnalyzer.Analyze(context.Modules, options.CustomModsOnlyFocus, context.Warnings));
+
+        ReportProgress(progress, 42, "Reading Harmony runtime logs (if available)...");
+        conflicts.AddRange(_harmonyPatchAnalyzer.Analyze(
+            context.Discovered.HarmonyLogRoots,
+            context.Modules,
+            options.CustomModsOnlyFocus,
+            context.Warnings));
+
+        ReportProgress(progress, 54, "Analyzing code-level behavior/model overlap...");
+        conflicts.AddRange(_codeConflictAnalyzer.Analyze(context.Modules, options.CustomModsOnlyFocus, context.Warnings));
+
+        ReportProgress(progress, 62, "Analyzing runtime session logs (launcher/watchdog/rgl)...");
+        conflicts.AddRange(_runtimeSessionLogAnalyzer.Analyze(
+            context.Modules,
+            context.CurrentOrder,
+            options.CustomModsOnlyFocus,
+            context.Warnings));
+
+        if (options.IncludeDataNoiseFindings)
         {
-            ReportProgress(progress, 82, "Scanning save files for mod-set risks...");
-            saveInsights = _saveFileScanner.Scan(
-                discovered.SaveRoot,
-                scopedModules,
-                warnings,
-                (localPercent, localStage) =>
-                {
-                    // Save-file scanning can be long; map local 0-100 to global 82-97.
-                    int mappedPercent = 82 + (int)Math.Round(Math.Clamp(localPercent, 0, 100) * 15.0 / 100.0);
-                    ReportProgress(progress, mappedPercent, localStage);
-                });
-            conflicts.AddRange(AnalyzeSaveFileRisk(saveInsights, scopedOrder));
+            ReportProgress(progress, 68, "Checking DLL collisions...");
+            conflicts.AddRange(AnalyzeDllCollisions(context.Modules, options.CustomModsOnlyFocus));
+            ReportProgress(progress, 74, "Checking XML and ModuleData collisions...");
+            conflicts.AddRange(AnalyzeXmlCollisions(context.Modules, options.CustomModsOnlyFocus));
+            conflicts.AddRange(AnalyzeModuleDataFileCollisions(context.Modules, options.CustomModsOnlyFocus, context.Warnings));
+        }
+        else
+        {
+            ReportProgress(progress, 74, "Skipping optional data-noise collision checks...");
+            context.Warnings.Add("Data-noise findings are disabled by default: skipping dependency version mismatch, DLL collision, and XML/ModuleData overlap checks.");
         }
 
-        ReportProgress(progress, 97, "Correlating runtime evidence with structural findings...");
-        conflicts = _runtimeEvidenceCorrelator.Correlate(conflicts, warnings).ToList();
+        ReportProgress(progress, 82, "Checking game API assembly reference mismatches...");
+        conflicts.AddRange(AnalyzeAssemblyReferenceMismatches(context.Modules, options.CustomModsOnlyFocus, context.Warnings));
+        return conflicts;
+    }
 
+    private IReadOnlyList<SaveFileInsight> CollectSaveInsights(
+        ScanPipelineContext context,
+        ScanOptions options,
+        List<ConflictFinding> conflicts,
+        IProgress<ScanProgressUpdate>? progress)
+    {
+        if (!options.IncludeSaveFileAnalysis)
+        {
+            return [];
+        }
+
+        ReportProgress(progress, 82, "Scanning save files for mod-set risks...");
+        IReadOnlyList<SaveFileInsight> saveInsights = _saveFileScanner.Scan(
+            context.Discovered.SaveRoot,
+            context.ScopedModules,
+            context.Warnings,
+            (localPercent, localStage) =>
+            {
+                int mappedPercent = 82 + (int)Math.Round(Math.Clamp(localPercent, 0, 100) * 15.0 / 100.0);
+                ReportProgress(progress, mappedPercent, localStage);
+            });
+        conflicts.AddRange(AnalyzeSaveFileRisk(saveInsights, context.ScopedOrder));
+        return saveInsights;
+    }
+
+    private List<ConflictFinding> FinalizeFindings(
+        IReadOnlyList<ConflictFinding> conflicts,
+        IReadOnlyList<ModuleManifest> modules,
+        ScanOptions options,
+        List<string> warnings,
+        IProgress<ScanProgressUpdate>? progress)
+    {
+        ReportProgress(progress, 97, "Correlating runtime evidence with structural findings...");
+        List<ConflictFinding> correlated = _runtimeEvidenceCorrelator.Correlate(conflicts, warnings).ToList();
+        List<ConflictFinding> harmonyMerged = MergeHarmonyFindings(correlated, modules);
         List<ConflictFinding> noiseFilteredConflicts = FilterDataNoiseFindings(
-            conflicts,
+            harmonyMerged,
             options.IncludeDataNoiseFindings,
-            warnings
-        );
-        List<ConflictFinding> filteredConflicts = FilterLikelyIssueFindings(
+            warnings);
+        return FilterLikelyIssueFindings(
             noiseFilteredConflicts,
             options.IncludeLikelyIssues,
-            warnings
-        );
-
-        ReportProgress(progress, 98, "Building recommended load order...");
-        LoadOrderRecommendation fullRecommendation = _loadOrderPlanner.Build(
-            modules,
-            currentOrder,
-            options.PinnedMods,
-            filteredConflicts
-        );
-        warnings.AddRange(fullRecommendation.Warnings);
-
-        LoadOrderRecommendation projectedRecommendation = ProjectLoadOrder(fullRecommendation, scopedModules, options.CustomModsOnlyFocus);
-        List<ConflictFinding> playerFacingConflicts = ProjectPlayerFacingFindings(filteredConflicts, modules);
-        if (options.AutoApplyLoadOrder)
-        {
-            ReportProgress(progress, 99, "Applying suggested load order...");
-            IReadOnlyList<string> applyOrder = BuildApplySuggestedOrder(fullRecommendation.CurrentOrder, projectedRecommendation.SuggestedOrder);
-            _launcherData.TryApplySuggestedOrder(discovered.LauncherDataPath, applyOrder, warnings);
-        }
-
-        ScanReport report = new()
-        {
-            GeneratedAtUtc = DateTimeOffset.UtcNow,
-            GameVersion = options.GameVersion,
-            ScannedModuleRoots = discovered.ModuleRoots,
-            ScannedWorkshopRoot = discovered.WorkshopRoot,
-            OverallState = InferState(playerFacingConflicts),
-            Modules = scopedModules,
-            Conflicts = playerFacingConflicts.OrderByDescending(c => c.Severity).ThenByDescending(c => c.Confidence).ToList(),
-            LoadOrder = projectedRecommendation,
-            SaveFiles = saveInsights,
-            Warnings = warnings,
-        };
-        ReportProgress(progress, 100, "Scan complete.");
-        return report;
+            warnings);
     }
 
     private static void ApplyCloudMetadataMode(
@@ -362,6 +395,140 @@ public sealed class CompatibilityAnalyzer
         return projected;
     }
 
+    private static List<ConflictFinding> MergeHarmonyFindings(
+        IReadOnlyList<ConflictFinding> findings,
+        IReadOnlyList<ModuleManifest> modules
+    )
+    {
+        Dictionary<string, ModuleManifest> modulesById = modules
+            .ToDictionary(m => m.Id, StringComparer.OrdinalIgnoreCase);
+        List<ConflictFinding> merged = [];
+        Dictionary<string, List<ConflictFinding>> groups = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (ConflictFinding finding in findings)
+        {
+            if (finding.Category is not ConflictCategory.HarmonyPatchConflict
+                and not ConflictCategory.HarmonyPatchStack)
+            {
+                merged.Add(finding);
+                continue;
+            }
+
+            HarmonyRiskProfile profile = HarmonyFindingProfiles.Parse(finding);
+            if (string.IsNullOrWhiteSpace(profile.TargetMethod)
+                || profile.TargetMethod.Equals("<unknown>", StringComparison.OrdinalIgnoreCase))
+            {
+                merged.Add(finding);
+                continue;
+            }
+
+            string[] customModules = finding.ModuleIds
+                .Where(moduleId => IsPlayerFacingCustomModule(moduleId, modulesById))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(moduleId => moduleId, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (customModules.Length == 0)
+            {
+                merged.Add(finding);
+                continue;
+            }
+
+            string key = $"{profile.TargetMethod}||{string.Join("|", customModules)}";
+            if (!groups.TryGetValue(key, out List<ConflictFinding>? grouped))
+            {
+                grouped = [];
+                groups[key] = grouped;
+            }
+
+            grouped.Add(finding);
+        }
+
+        foreach (List<ConflictFinding> group in groups.Values)
+        {
+            List<HarmonyRiskProfile> profiles = group
+                .Select(HarmonyFindingProfiles.Parse)
+                .ToList();
+            HarmonyRiskProfile mergedProfile = HarmonyFindingProfiles.Merge(profiles);
+            if (HarmonyFindingProfiles.ShouldSuppressLowValue(mergedProfile))
+            {
+                continue;
+            }
+
+            HarmonyRiskAssessment assessment = HarmonyFindingProfiles.Assess(mergedProfile);
+            List<string> moduleIds = group
+                .SelectMany(f => f.ModuleIds)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(moduleId => moduleId, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            merged.Add(new ConflictFinding
+            {
+                Category = assessment.Category,
+                Severity = assessment.Severity,
+                Confidence = assessment.Confidence,
+                ModuleIds = moduleIds,
+                Reason = assessment.Reason,
+                LikelyInGameOutcome = assessment.LikelyOutcome,
+                Recommendation = assessment.Recommendation,
+                Evidence = BuildMergedHarmonyEvidence(group, mergedProfile),
+                StructuredEvidence = HarmonyFindingProfiles.BuildStructuredEvidence(mergedProfile),
+            });
+        }
+
+        return merged;
+    }
+
+    private static IReadOnlyList<string> BuildMergedHarmonyEvidence(
+        IReadOnlyList<ConflictFinding> group,
+        HarmonyRiskProfile profile
+    )
+    {
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+        List<string> evidence = [];
+
+        foreach (ConflictFinding finding in group)
+        {
+            foreach (string item in finding.Evidence)
+            {
+                if (ShouldReplaceHarmonyProfileEvidence(item))
+                {
+                    continue;
+                }
+
+                if (seen.Add(item))
+                {
+                    evidence.Add(item);
+                }
+            }
+        }
+
+        string kindSummary = profile.PatchKinds.Count == 0
+            ? "unknown patch kinds"
+            : string.Join(", ", profile.PatchKinds);
+        foreach (string item in new[]
+                 {
+                     $"{HarmonyFindingProfiles.TargetPrefix}{profile.TargetMethod}",
+                     $"{HarmonyFindingProfiles.KindsPrefix}{kindSummary}",
+                 }
+                 .Concat(HarmonyFindingProfiles.BuildEvidenceTags(profile)))
+        {
+            if (seen.Add(item))
+            {
+                evidence.Add(item);
+            }
+        }
+
+        return evidence.Take(18).ToList();
+    }
+
+    private static bool ShouldReplaceHarmonyProfileEvidence(string evidence)
+    {
+        return evidence.StartsWith(HarmonyFindingProfiles.TargetPrefix, StringComparison.OrdinalIgnoreCase)
+            || evidence.StartsWith(HarmonyFindingProfiles.KindsPrefix, StringComparison.OrdinalIgnoreCase)
+            || evidence.StartsWith(HarmonyFindingProfiles.ProfilePrefix, StringComparison.OrdinalIgnoreCase)
+            || evidence.StartsWith(HarmonyFindingProfiles.SourcePrefix, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsPlayerFacingCustomModule(
         string moduleId,
         IReadOnlyDictionary<string, ModuleManifest> modulesById
@@ -457,6 +624,16 @@ public sealed class CompatibilityAnalyzer
                             : "Game may fail to launch or crash when the module initializes.",
                         Recommendation = $"Install '{dep.Id}' or disable '{module.Id}'.",
                         Evidence = [module.SubModulePath],
+                        StructuredEvidence = EvidenceProfiles.Create(
+                            FindingEvidenceScope.Module,
+                            [FindingEvidenceSource.StaticMetadata],
+                            [FindingEvidenceKind.DependencyRule],
+                            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                            {
+                                ["module-id"] = module.Id,
+                                ["dependency-id"] = dep.Id,
+                                ["optional"] = dep.Optional ? "1" : "0",
+                            }),
                     });
                     continue;
                 }
@@ -521,6 +698,17 @@ public sealed class CompatibilityAnalyzer
                         LikelyInGameOutcome = "Patch application order can break startup or create silent behavior issues.",
                         Recommendation = recommendation,
                         Evidence = [],
+                        StructuredEvidence = EvidenceProfiles.Create(
+                            FindingEvidenceScope.Module,
+                            [FindingEvidenceSource.LauncherOrder, FindingEvidenceSource.StaticMetadata],
+                            [FindingEvidenceKind.DependencyRule],
+                            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                            {
+                                ["module-id"] = module.Id,
+                                ["dependency-id"] = dep.Id,
+                                ["expected-relation"] = relation,
+                                ["optional"] = dep.Optional ? "1" : "0",
+                            }),
                     });
                 }
             }
@@ -1073,6 +1261,16 @@ public sealed class CompatibilityAnalyzer
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
+            StructuredEvidence = EvidenceProfiles.Create(
+                FindingEvidenceScope.Save,
+                [FindingEvidenceSource.SaveScan],
+                [FindingEvidenceKind.MissingSaveMod],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["affected-save-count"] = affectedSaveNames.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["missing-mod-count"] = missingMods.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["campaign-sensitive"] = hasNewCampaignSensitiveMod ? "1" : "0",
+                }),
         };
 
         return [aggregate];
@@ -1112,6 +1310,9 @@ public sealed class CompatibilityAnalyzer
             .Where(ShouldInclude)
             .ToList();
         List<LoadOrderMove> moves = BuildMoves(current, suggested);
+        HashSet<string> visibleIds = current
+            .Concat(suggested)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         List<string> warnings = [.. full.Warnings];
         List<string> rationale = [.. full.Rationale];
         if (customOnlyFocus)
@@ -1134,6 +1335,9 @@ public sealed class CompatibilityAnalyzer
             Warnings = warnings,
             Rationale = rationale,
             Confidence = full.Confidence,
+            ModuleRationales = full.ModuleRationales
+                .Where(r => visibleIds.Contains(r.ModuleId))
+                .ToList(),
         };
     }
 
@@ -1217,5 +1421,14 @@ public sealed class CompatibilityAnalyzer
         string DllPath,
         string ReferenceName,
         Version ReferenceVersion
+    );
+
+    private sealed record ScanPipelineContext(
+        DiscoveredPaths Discovered,
+        List<string> Warnings,
+        IReadOnlyList<ModuleManifest> Modules,
+        IReadOnlyList<string> CurrentOrder,
+        IReadOnlyList<ModuleManifest> ScopedModules,
+        IReadOnlyList<string> ScopedOrder
     );
 }

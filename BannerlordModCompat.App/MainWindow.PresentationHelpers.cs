@@ -135,7 +135,7 @@ public partial class MainWindow
         ConflictCategory.DependencyVersionMismatch => "Dependency Version Mismatch",
         ConflictCategory.LoadOrderViolation => "Load Order Violation",
         ConflictCategory.HarmonyPatchConflict => "Shared Method Patch",
-        ConflictCategory.HarmonyPatchStack => "Shared Method Patch Stack",
+        ConflictCategory.HarmonyPatchStack => "Shared Method Patch",
         ConflictCategory.BehaviorEventOverlap => "Shared Campaign Hook",
         ConflictCategory.GameModelOverlap => "Shared Gameplay Model",
         ConflictCategory.MissionBehaviorOverlap => "Shared Mission Logic",
@@ -157,21 +157,12 @@ public partial class MainWindow
         ConflictCategory.RuntimeCrashSession => IsRecurringRuntimeCluster(finding)
             ? "Several recorded sessions crashed with similar mod sets"
             : "A recorded session crashed with this mod set active",
-        ConflictCategory.RuntimeLoaderFailure => IsRecurringRuntimeCluster(finding)
-            ? "Several recorded sessions show load/runtime errors"
-            : "A recorded session shows load/runtime errors",
+        ConflictCategory.RuntimeLoaderFailure => BuildRuntimeLoaderHeadline(finding),
         ConflictCategory.RuntimeModuleSetMismatch => "Game launched with a different mod set",
         ConflictCategory.SaveFileRisk => GetSaveRiskEntries(finding).Count == 1
             ? "This save was created with mods now missing"
             : "These saves were created with mods now missing",
-        ConflictCategory.HarmonyPatchConflict => IsPostfixOnlyHarmonyFinding(finding)
-            ? "Two mods add postfix patches to the same game method"
-            : IsRuntimeConfirmed(finding)
-            ? "Two mods patch the same method and logs point at that overlap"
-            : "Two mods patch the same game method",
-        ConflictCategory.HarmonyPatchStack => IsPostfixOnlyHarmonyFinding(finding)
-            ? "Several mods stack postfix patches on the same game method"
-            : "Several mods patch the same game method",
+        ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack => BuildHarmonyPlayerHeadline(finding),
         ConflictCategory.LoadOrderViolation => "Current load order breaks a dependency rule",
         ConflictCategory.GameModelOverlap => "Several mods change the same gameplay calculation",
         ConflictCategory.BehaviorEventOverlap => "Several mods react to the same campaign events",
@@ -186,14 +177,8 @@ public partial class MainWindow
     {
         _ when IsRecurringRuntimeCluster(finding) =>
             "The same runtime failure signature keeps repeating across sessions. This is a real stability pattern, not a one-off guess.",
-        ConflictCategory.HarmonyPatchConflict when IsPostfixOnlyHarmonyFinding(finding) =>
-            "These are postfix patches on the same method. That usually means stack/order behavior to validate, not a direct crash claim.",
-        ConflictCategory.HarmonyPatchConflict => IsRuntimeConfirmed(finding)
-            ? "Two mods patch the same method, and runtime evidence points at that overlap. This still does not prove which mod is at fault by itself."
-            : "Two mods patch the same method. This is not proof of a crash; it means patch order or Harmony priority can change results.",
-        ConflictCategory.HarmonyPatchStack => IsPostfixOnlyHarmonyFinding(finding)
-            ? "These are postfix patches. They usually stack safely, but final values or side effects can still change with order."
-            : "Several mods patch the same method. That usually means order matters, not that the game must crash.",
+        ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack =>
+            BuildHarmonyImpactSummary(finding),
         ConflictCategory.LoadOrderViolation => "The current module order breaks a declared dependency or precedence rule.",
         ConflictCategory.MissingDependency => "A required mod is missing.",
         ConflictCategory.ExplicitIncompatibility => "Mod author marked this pair as incompatible.",
@@ -209,7 +194,7 @@ public partial class MainWindow
         ConflictCategory.SaveFileRisk => "These saves reference mods that are not active right now. This is about save compatibility, not a live load-order crash by itself.",
         ConflictCategory.AnalyzerWarning => "The analyzer hit dynamic code paths it could not fully resolve. Treat this as incomplete visibility, not a confirmed conflict.",
         ConflictCategory.RuntimeModuleSetMismatch => "The modules that actually ran do not match the current launcher profile, so the live session differed from the planned order.",
-        ConflictCategory.RuntimeLoaderFailure => "Bannerlord logs already contain loader/runtime errors for this profile. That is observed evidence, but not automatic proof of a single guilty mod.",
+        ConflictCategory.RuntimeLoaderFailure => BuildRuntimeLoaderImpactSummary(finding),
         ConflictCategory.RuntimeCrashSession => "Bannerlord logs show a crash for a recent session with this profile. That proves the session crashed, not which one mod caused it.",
         _ => "Potential compatibility risk detected.",
     };
@@ -223,7 +208,9 @@ public partial class MainWindow
 
         if (finding.Category == ConflictCategory.RuntimeLoaderFailure)
         {
-            return "Error lines in logs";
+            return IsRecurringRuntimeCluster(finding)
+                ? "Repeated log evidence"
+                : "Concrete log evidence";
         }
 
         if (finding.Category == ConflictCategory.RuntimeModuleSetMismatch)
@@ -241,17 +228,21 @@ public partial class MainWindow
             return "Seen In Logs";
         }
 
+        if (finding.Category is ConflictCategory.HarmonyPatchConflict
+            or ConflictCategory.HarmonyPatchStack)
+        {
+            return BuildHarmonyEvidenceStrength(finding);
+        }
+
         if (finding.Category is ConflictCategory.MissingDependency
             or ConflictCategory.ExplicitIncompatibility
             or ConflictCategory.LoadOrderViolation
-            or ConflictCategory.AssemblyReferenceMismatch
-            or ConflictCategory.HarmonyPatchConflict)
+            or ConflictCategory.AssemblyReferenceMismatch)
         {
             return "Direct Mod Scan";
         }
 
-        if (finding.Category is ConflictCategory.HarmonyPatchStack
-            or ConflictCategory.GameModelOverlap
+        if (finding.Category is ConflictCategory.GameModelOverlap
             or ConflictCategory.BehaviorEventOverlap
             or ConflictCategory.MissionBehaviorOverlap
             or ConflictCategory.LifecycleRegistrationOverlap)
@@ -267,19 +258,17 @@ public partial class MainWindow
         ConflictCategory.MissingDependency => "Can Block Startup",
         ConflictCategory.ExplicitIncompatibility => "Can Break Startup Or Saves",
         ConflictCategory.LoadOrderViolation => "Can Change Startup Order",
-        ConflictCategory.HarmonyPatchConflict => HasHarmonyRuntimeCrashEvidence(finding)
-            ? "Can Crash Or Misbehave"
-            : IsPostfixOnlyHarmonyFinding(finding) ? "Patch Order Matters" : "Can Change Gameplay Results",
+        ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack =>
+            BuildHarmonyImpactRiskLabel(finding),
         ConflictCategory.AssemblyReferenceMismatch => "Can Crash On Load",
         ConflictCategory.SaveFileRisk => GetSaveRiskEntries(finding).Count == 1 ? "Can Break This Save" : "Can Break These Saves",
-        ConflictCategory.HarmonyPatchStack => IsPostfixOnlyHarmonyFinding(finding) || HasHarmonyRuntimeProof(finding) ? "Patch Order Matters" : "Needs Validation",
         ConflictCategory.GameModelOverlap => "Can Change Calculations",
         ConflictCategory.BehaviorEventOverlap => "Can Change Campaign Behavior",
         ConflictCategory.MissionBehaviorOverlap => "Can Change Mission Behavior",
         ConflictCategory.LifecycleRegistrationOverlap => "Startup Order Matters",
         ConflictCategory.AnalyzerWarning => "Scan Could Not Prove It",
         ConflictCategory.RuntimeModuleSetMismatch => "Actual Session Differed",
-        ConflictCategory.RuntimeLoaderFailure => IsRecurringRuntimeCluster(finding) ? "Repeated Logged Failures" : "Recorded Logged Failure",
+        ConflictCategory.RuntimeLoaderFailure => BuildRuntimeLoaderRiskLabel(finding),
         ConflictCategory.RuntimeCrashSession => IsRecurringRuntimeCluster(finding) ? "Repeated Recorded Crashes" : "Recorded Crash Session",
         _ => finding.Severity switch
         {
@@ -344,7 +333,9 @@ public partial class MainWindow
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(3)
             .ToList()!;
-        string certainty = IsRuntimeConfirmed(finding)
+        string certainty = finding.Category is ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack
+            ? BuildHarmonyMeaningCertainty(finding)
+            : IsRuntimeConfirmed(finding)
             ? "This was observed in Bannerlord logs."
             : "This is an analyzer warning, not direct proof from logs.";
         string sourceFiles = runtimeFiles.Count == 0
@@ -359,6 +350,18 @@ public partial class MainWindow
     private static string BuildConfidenceInterpretation(ConflictFinding finding)
     {
         string evidenceStrength = BuildEvidenceStrength(finding);
+        if (finding.Category is ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack)
+        {
+            string profileText = IsAdvisoryHarmonyStack(finding)
+                ? "This currently looks like a stack-to-validate warning."
+                : HasHarmonyOrderingRisk(finding)
+                    ? "This currently looks like an ordering-stability warning."
+                    : HasHarmonyOwnershipRisk(finding)
+                        ? "This currently looks like a shared patch-ownership warning."
+                        : "This currently looks like a structural overlap warning.";
+            return $"How sure the app is: {finding.Confidence:P0}. {profileText} The signal comes from {evidenceStrength.ToLowerInvariant()}, not from a guaranteed crash claim.";
+        }
+
         if (IsRuntimeConfirmed(finding))
         {
             return $"How sure the app is: {finding.Confidence:P0}. This warning is backed by Bannerlord logs ({evidenceStrength}). Confidence is about the warning being real, not your exact chance to crash.";
@@ -390,8 +393,8 @@ public partial class MainWindow
         if (finding.Category == ConflictCategory.RuntimeLoaderFailure)
         {
             return IsRecurringRuntimeCluster(finding)
-                ? "Similar loader/runtime error markers repeat across sessions with overlapping mod sets."
-                : "A recorded session contains loader/runtime errors while this mod set was active.";
+                ? $"The same logged issue keeps repeating: {GetRuntimeIssueSummary(finding)}."
+                : $"{GetRuntimeIssueSummary(finding)} was seen in Bannerlord logs for this profile.";
         }
 
         if (finding.Category == ConflictCategory.RuntimeModuleSetMismatch)
@@ -402,32 +405,42 @@ public partial class MainWindow
         if (finding.Category is ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack)
         {
             string? target = TryExtractHarmonyTarget(finding);
-            if (IsPostfixOnlyHarmonyFinding(finding))
+            if (IsAdvisoryHarmonyStack(finding))
             {
                 if (!string.IsNullOrWhiteSpace(target))
                 {
-                    return $"Shared postfix target: {ToShortSentence(target, 70)}. Postfixes often stack safely, so validate gameplay first and isolate only if a real symptom appears.";
+                    return $"Shared target: {ToShortSentence(target, 70)}. This looks like a stack to validate first, not a likely hard conflict.";
                 }
 
-                return "Shared Harmony overlap is postfix-only. Postfixes often stack safely, so validate gameplay first and isolate only if a real symptom appears.";
+                return "Shared Harmony target looks more like a stack to validate first than a likely hard conflict.";
             }
 
-            if (IsRuntimeConfirmed(finding))
+            if (HasHarmonyOrderingRisk(finding))
             {
                 if (!string.IsNullOrWhiteSpace(target))
                 {
-                    return $"Runtime + Harmony evidence on {ToShortSentence(target, 70)}.";
+                    return $"Shared target: {ToShortSentence(target, 70)}. Patch order is not clearly stable on this method.";
                 }
 
-                return "Runtime + Harmony evidence confirms patch-chain overlap on shared target methods.";
+                return "Patch order is not clearly stable on this shared Harmony target.";
+            }
+
+            if (HasHarmonyOwnershipRisk(finding))
+            {
+                if (!string.IsNullOrWhiteSpace(target))
+                {
+                    return $"Shared target: {ToShortSentence(target, 70)}. More than one mod appears to be trying to control the same method path.";
+                }
+
+                return "More than one mod appears to be trying to control the same Harmony method path.";
             }
 
             if (!string.IsNullOrWhiteSpace(target))
             {
-                return $"Shared Harmony target: {ToShortSentence(target, 70)}. Order/priority can change outcomes.";
+                return $"Shared Harmony target: {ToShortSentence(target, 70)}. Validate the gameplay path this method affects.";
             }
 
-            return "Multiple patches target the same method family; order and priority can alter outcomes.";
+            return "Multiple patches target the same method family. Validate the gameplay path this method affects.";
         }
 
         if (finding.Category is ConflictCategory.LifecycleRegistrationOverlap
@@ -547,36 +560,41 @@ public partial class MainWindow
 
     private static string BuildHarmonyExecutionEffect(ConflictFinding finding)
     {
-        string baseText = "Relative order and Harmony priorities can change final patched behavior.";
-        string? graph = finding.Evidence.FirstOrDefault(e =>
-            e.StartsWith("harmony-graph:", StringComparison.OrdinalIgnoreCase));
+        string? target = TryExtractHarmonyTarget(finding);
+        string familyHint = BuildHarmonyFamilyHint(finding);
+        List<string> details = [];
+
+        if (!string.IsNullOrWhiteSpace(target))
+        {
+            details.Add($"target={target}");
+        }
+
+        if (HasHarmonyOrderingRisk(finding))
+        {
+            string? graph = finding.Evidence.FirstOrDefault(e =>
+                e.StartsWith("harmony-graph:", StringComparison.OrdinalIgnoreCase));
+            if (graph is not null)
+            {
+                details.Add(graph["harmony-graph:".Length..]);
+            }
+        }
+
         string? priority = finding.Evidence.FirstOrDefault(e =>
             e.StartsWith("harmony-priority:", StringComparison.OrdinalIgnoreCase));
-        string? target = finding.Evidence.FirstOrDefault(e =>
-            e.StartsWith("harmony-target:", StringComparison.OrdinalIgnoreCase));
-
-        if (graph is null && priority is null && target is null)
-        {
-            return baseText;
-        }
-
-        List<string> details = [];
-        if (target is not null)
-        {
-            details.Add($"target={target["harmony-target:".Length..]}");
-        }
-
-        if (graph is not null)
-        {
-            details.Add(graph["harmony-graph:".Length..]);
-        }
-
         if (priority is not null)
         {
             details.Add(priority["harmony-priority:".Length..]);
         }
 
-        return $"{baseText} Method graph signals: {string.Join(" | ", details)}.";
+        string baseText = HasHarmonyOrderingRisk(finding)
+            ? "Patch order is not clearly stable, so final Harmony behavior can shift."
+            : HasHarmonyOwnershipRisk(finding)
+                ? "More than one mod is trying to control the same method path."
+                : "This looks like a Harmony stack to validate before changing the profile.";
+
+        return details.Count == 0
+            ? $"{baseText} {familyHint}"
+            : $"{baseText} {familyHint} Advanced patch/order context: {string.Join(" | ", details)}.";
     }
 
     private static string ToShortSentence(string text, int maxLength)
@@ -662,12 +680,7 @@ public partial class MainWindow
 
     private static string BuildFallbackOutcome(ConflictFinding finding) => finding.Category switch
     {
-        ConflictCategory.HarmonyPatchConflict => IsPostfixOnlyHarmonyFinding(finding)
-            ? "Final values or side effects can differ if both postfixes touch the same result or shared state."
-            : "Unexpected gameplay results, duplicate effects, or occasional runtime errors in the patched system.",
-        ConflictCategory.HarmonyPatchStack => IsPostfixOnlyHarmonyFinding(finding)
-            ? "Postfix order can change final values or shared side effects, even when the stack is otherwise stable."
-            : "Behavior can change with patch order, especially after updates or reordered mods.",
+        ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack => BuildHarmonyFallbackOutcome(finding),
         ConflictCategory.LoadOrderViolation => "Startup issues or subtle behavior changes because modules initialized in the wrong order.",
         ConflictCategory.MissingDependency => "Mod may fail to initialize or disable parts of its functionality.",
         ConflictCategory.ExplicitIncompatibility => "High chance of crashes or severe campaign instability.",
@@ -694,12 +707,7 @@ public partial class MainWindow
 
     private static string BuildFallbackRecommendation(ConflictFinding finding) => finding.Category switch
     {
-        ConflictCategory.HarmonyPatchConflict => IsPostfixOnlyHarmonyFinding(finding)
-            ? "Keep the mods together first and test the affected gameplay path. Only isolate one postfix source if you can reproduce a real symptom."
-            : "If this overlap matches real symptoms, set Harmony priority/order rules or temporarily disable one of the two mods for a quick repro.",
-        ConflictCategory.HarmonyPatchStack => IsPostfixOnlyHarmonyFinding(finding)
-            ? "Validate the affected gameplay path with the current stack. If it stays stable, treat this as order-watch data rather than a blocker."
-            : "Check intended patch order, then test once with one overlapping patch source disabled.",
+        ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack => BuildHarmonyFallbackRecommendation(finding),
         ConflictCategory.LoadOrderViolation => "Follow the suggested load order move for these modules.",
         ConflictCategory.MissingDependency => "Install the dependency or remove the dependent module.",
         ConflictCategory.ExplicitIncompatibility => "Choose one of the two modules for this profile.",
@@ -750,7 +758,7 @@ public partial class MainWindow
         steps.Add("Run one short campaign/battle validation after applying the fix.");
         if (finding.Category is ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack)
         {
-            steps.Add("If available, use Harmony runtime logs to verify final patch order on the target method.");
+            steps.Add(BuildHarmonyValidationStep(finding));
         }
 
         if (IsRecurringRuntimeCluster(finding))
@@ -785,6 +793,75 @@ public partial class MainWindow
 
         string raw = token["cluster-session-count:".Length..].Trim();
         return int.TryParse(raw, out int value) && value > 0
+            ? value
+            : null;
+    }
+
+    private static string BuildRuntimeLoaderHeadline(ConflictFinding finding)
+    {
+        string label = GetRuntimeIssueLabel(finding);
+        return IsRecurringRuntimeCluster(finding)
+            ? $"The same logged {label} keeps repeating"
+            : $"Logs show a {label}";
+    }
+
+    private static string BuildRuntimeLoaderImpactSummary(ConflictFinding finding)
+    {
+        string summary = GetRuntimeIssueSummary(finding);
+        return IsRecurringRuntimeCluster(finding)
+            ? $"{summary} keeps repeating across runs. This is observed evidence from multiple sessions, but it still does not identify one guilty mod by itself."
+            : $"{summary} was seen in Bannerlord logs for this profile. This is observed evidence, but it still does not identify one guilty mod by itself.";
+    }
+
+    private static string BuildRuntimeLoaderRiskLabel(ConflictFinding finding)
+    {
+        return GetRuntimeIssueKindToken(finding) switch
+        {
+            "missing-method" => IsRecurringRuntimeCluster(finding) ? "Repeated API Mismatch" : "Logged API Mismatch",
+            "type-load" => IsRecurringRuntimeCluster(finding) ? "Repeated Type Load Failure" : "Logged Type Load Failure",
+            "loader-failure" => IsRecurringRuntimeCluster(finding) ? "Repeated DLL Load Failure" : "Logged DLL Load Failure",
+            "null-reference" => IsRecurringRuntimeCluster(finding) ? "Repeated Runtime Exception" : "Logged Runtime Exception",
+            "assertion" => IsRecurringRuntimeCluster(finding) ? "Repeated Assertion" : "Logged Assertion",
+            "unhandled-exception" => IsRecurringRuntimeCluster(finding) ? "Repeated Unhandled Exception" : "Logged Unhandled Exception",
+            _ => IsRecurringRuntimeCluster(finding) ? "Repeated Logged Failure" : "Logged Failure",
+        };
+    }
+
+    private static string GetRuntimeIssueLabel(ConflictFinding finding)
+    {
+        return GetRuntimeIssueKindToken(finding) switch
+        {
+            "missing-method" => "missing-method or API mismatch",
+            "type-load" => "type-load failure",
+            "loader-failure" => "DLL or assembly load failure",
+            "null-reference" => "runtime exception",
+            "assertion" => "assertion failure",
+            "unhandled-exception" => "unhandled exception",
+            _ => "runtime issue",
+        };
+    }
+
+    private static string GetRuntimeIssueSummary(ConflictFinding finding)
+    {
+        string? summary = GetStructuredEvidenceDetail(finding, "issue-summary");
+        return string.IsNullOrWhiteSpace(summary)
+            ? "A concrete runtime issue"
+            : summary;
+    }
+
+    private static string GetRuntimeIssueKindToken(ConflictFinding finding)
+    {
+        return GetStructuredEvidenceDetail(finding, "issue-kind") ?? string.Empty;
+    }
+
+    private static string? GetStructuredEvidenceDetail(ConflictFinding finding, string key)
+    {
+        if (finding.StructuredEvidence?.Details is null)
+        {
+            return null;
+        }
+
+        return finding.StructuredEvidence.Details.TryGetValue(key, out string? value)
             ? value
             : null;
     }
@@ -844,9 +921,34 @@ public partial class MainWindow
             return $"Patch kinds: {evidence["harmony-kinds:".Length..]}";
         }
 
+        if (evidence.StartsWith("harmony-source:", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Harmony source: {ToDisplayHarmonySource(evidence["harmony-source:".Length..])}.";
+        }
+
         if (evidence.StartsWith("harmony-profile:postfix-only", StringComparison.OrdinalIgnoreCase))
         {
             return "Harmony profile: postfix-only stack.";
+        }
+
+        if (evidence.StartsWith("harmony-profile:patch-shape=", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Harmony patch shape: {ToDisplayHarmonyToken(evidence["harmony-profile:patch-shape=".Length..])}.";
+        }
+
+        if (evidence.StartsWith("harmony-profile:order-state=", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Harmony order state: {ToDisplayHarmonyToken(evidence["harmony-profile:order-state=".Length..])}.";
+        }
+
+        if (evidence.StartsWith("harmony-profile:ownership-shape=", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Harmony ownership shape: {ToDisplayHarmonyToken(evidence["harmony-profile:ownership-shape=".Length..])}.";
+        }
+
+        if (evidence.StartsWith("harmony-profile:target-family=", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Harmony target family: {ToDisplayHarmonyToken(evidence["harmony-profile:target-family=".Length..])}.";
         }
 
         if (evidence.StartsWith("harmony-graph:", StringComparison.OrdinalIgnoreCase))
@@ -1035,10 +1137,290 @@ public partial class MainWindow
             ShowIsolationSection: validateTabSelected && hasIsolationSection);
     }
 
+    private static string BuildHarmonyPlayerHeadline(ConflictFinding finding)
+    {
+        if (IsAdvisoryHarmonyStack(finding))
+        {
+            return "These mods patch the same method, but this looks like a stack to validate first";
+        }
+
+        if (HasHarmonyOrderingRisk(finding))
+        {
+            return "These mods patch the same method and their patch order is not clearly stable";
+        }
+
+        if (HasHarmonyOwnershipRisk(finding))
+        {
+            return "These mods both try to control the same method path";
+        }
+
+        return "These mods patch the same game method";
+    }
+
+    private static string BuildHarmonyImpactSummary(ConflictFinding finding)
+    {
+        string familyOutcome = BuildHarmonyFamilyOutcome(finding);
+        if (IsAdvisoryHarmonyStack(finding))
+        {
+            return $"These mods patch the same method, but the current signal looks like a stack to validate, not a likely hard conflict. {familyOutcome}";
+        }
+
+        if (HasHarmonyOrderingRisk(finding))
+        {
+            return $"These mods patch the same method and their patch order is not clearly stable. {familyOutcome}";
+        }
+
+        if (HasHarmonyOwnershipRisk(finding))
+        {
+            return $"These mods both try to control the same method path. {familyOutcome}";
+        }
+
+        return $"These mods patch the same method. Validate the affected gameplay path before treating this as a hard conflict. {familyOutcome}";
+    }
+
+    private static string BuildHarmonyEvidenceStrength(ConflictFinding finding)
+    {
+        bool hasStatic = HasHarmonySource(finding, "static");
+        bool hasDuplicate = HasHarmonySource(finding, "duplicate-block");
+        bool hasGraph = HasHarmonySource(finding, "log-graph");
+        bool hasRuntime = HasHarmonyRuntimeCorrelationEvidence(finding);
+
+        return (hasStatic, hasDuplicate, hasGraph, hasRuntime) switch
+        {
+            (_, _, _, true) when hasGraph || hasDuplicate => "Harmony logs + runtime logs",
+            (_, _, _, true) => "Mod scan + runtime logs",
+            (_, true, true, false) => "Harmony duplicate scan + graph log",
+            (true, false, true, false) => "Mod scan + Harmony graph log",
+            (_, true, false, false) => "Harmony duplicate scan",
+            (_, false, true, false) => "Harmony graph log",
+            (true, false, false, false) => "Direct Mod Scan",
+            _ => "Likely From Mod Scan",
+        };
+    }
+
+    private static string BuildHarmonyImpactRiskLabel(ConflictFinding finding)
+    {
+        if (IsAdvisoryHarmonyStack(finding))
+        {
+            return "Validate Stack";
+        }
+
+        if (HasHarmonyOrderingRisk(finding))
+        {
+            return "Order May Not Be Stable";
+        }
+
+        if (HasHarmonyOwnershipRisk(finding))
+        {
+            return "Two Mods Control Same Path";
+        }
+
+        return "Needs Validation";
+    }
+
+    private static string BuildHarmonyFallbackOutcome(ConflictFinding finding)
+    {
+        string familyOutcome = BuildHarmonyFamilyOutcome(finding);
+        if (IsAdvisoryHarmonyStack(finding))
+        {
+            return $"This looks like a stack to validate, not a likely hard conflict. {familyOutcome}";
+        }
+
+        if (HasHarmonyOrderingRisk(finding))
+        {
+            return $"Patch order is not clearly stable. {familyOutcome}";
+        }
+
+        if (HasHarmonyOwnershipRisk(finding))
+        {
+            return $"More than one mod appears to control the same method path. {familyOutcome}";
+        }
+
+        return familyOutcome;
+    }
+
+    private static string BuildHarmonyFallbackRecommendation(ConflictFinding finding)
+    {
+        string testHint = BuildHarmonyValidationStep(finding);
+        if (IsAdvisoryHarmonyStack(finding))
+        {
+            return $"Keep the stack together and validate the affected gameplay path first. {testHint}";
+        }
+
+        if (HasHarmonyOrderingRisk(finding))
+        {
+            return $"Add explicit Harmony ordering only if the issue reproduces. {testHint}";
+        }
+
+        if (HasHarmonyOwnershipRisk(finding))
+        {
+            return $"Treat one mod as the primary owner for this method path or ship a compatibility patch. {testHint}";
+        }
+
+        return testHint;
+    }
+
+    private static string BuildHarmonyMeaningCertainty(ConflictFinding finding)
+    {
+        if (HasHarmonyRuntimeCorrelationEvidence(finding))
+        {
+            return "This Harmony warning is backed by runtime logs plus patch evidence.";
+        }
+
+        if (HasHarmonySource(finding, "log-graph") || HasHarmonySource(finding, "duplicate-block"))
+        {
+            return "This Harmony warning is backed by Harmony log output.";
+        }
+
+        return "This Harmony warning comes from mod metadata and still needs an in-game validation pass.";
+    }
+
+    private static string BuildHarmonyValidationStep(ConflictFinding finding)
+    {
+        return BuildHarmonyFamilyTestHint(finding);
+    }
+
+    private static string BuildHarmonyFamilyOutcome(ConflictFinding finding)
+    {
+        return GetHarmonyTargetFamilyToken(finding) switch
+        {
+            "settlement-campaign-rule" => "Campaign progression behavior may differ on the affected settlement or campaign rule path.",
+            "economic-calculation" => "Final calculation results may differ.",
+            "mission-startup" => "Battle or mission behavior may differ.",
+            "access-gate" => "Entry conditions or decision results may differ.",
+            _ => "Gameplay behavior may differ on this method path.",
+        };
+    }
+
+    private static string BuildHarmonyFamilyHint(ConflictFinding finding)
+    {
+        return GetHarmonyTargetFamilyToken(finding) switch
+        {
+            "settlement-campaign-rule" => "Validate settlement or campaign progression behavior on the affected path.",
+            "economic-calculation" => "Validate the affected calculation in a normal campaign flow.",
+            "mission-startup" => "Validate one short battle or mission on the affected path.",
+            "access-gate" => "Validate the entry or decision path this method controls.",
+            _ => "Validate the gameplay path that reaches this method.",
+        };
+    }
+
+    private static string BuildHarmonyFamilyTestHint(ConflictFinding finding)
+    {
+        return GetHarmonyTargetFamilyToken(finding) switch
+        {
+            "settlement-campaign-rule" => "Run a short campaign check and watch the affected settlement values over a few ticks or days.",
+            "economic-calculation" => "Run one normal campaign scenario that reaches this calculation and compare the actual result.",
+            "mission-startup" => "Run one short battle or mission with the current stack unchanged.",
+            "access-gate" => "Check the entry or decision this method controls and confirm the result still matches expectation.",
+            _ => "Run one short in-game check that reaches this method before changing the stack.",
+        };
+    }
+
+    private static bool IsAdvisoryHarmonyStack(ConflictFinding finding)
+    {
+        string shape = GetHarmonyPatchShapeToken(finding);
+        string order = GetHarmonyOrderStateToken(finding);
+        return shape == "postfix-only"
+            && (order is "explicitly-ordered" or "unknown")
+            && !HasHarmonyRuntimeCorrelationEvidence(finding)
+            && !HasHarmonyOwnershipRisk(finding);
+    }
+
+    private static bool HasHarmonyOrderingRisk(ConflictFinding finding)
+    {
+        return GetHarmonyOrderStateToken(finding) is "same-priority-ambiguous" or "unordered" or "cycle";
+    }
+
+    private static bool HasHarmonyOwnershipRisk(ConflictFinding finding)
+    {
+        string shape = GetHarmonyPatchShapeToken(finding);
+        string ownership = GetHarmonyOwnershipShapeToken(finding);
+        return shape is "transpiler-present" or "prefix-mix"
+            || ownership == "single-kind-duplicated";
+    }
+
+    private static bool HasHarmonyRuntimeCorrelationEvidence(ConflictFinding finding)
+    {
+        return finding.Evidence.Any(e => e.StartsWith("runtime-correlation:", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool HasHarmonySource(ConflictFinding finding, string sourceToken)
+    {
+        return finding.Evidence.Any(e =>
+            e.Equals($"harmony-source:{sourceToken}", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string GetHarmonyPatchShapeToken(ConflictFinding finding)
+    {
+        return GetHarmonyProfileToken(finding, "patch-shape")
+            ?? (IsPostfixOnlyHarmonyFinding(finding) ? "postfix-only" : "unknown");
+    }
+
+    private static string GetHarmonyOrderStateToken(ConflictFinding finding)
+    {
+        return GetHarmonyProfileToken(finding, "order-state")
+            ?? "unknown";
+    }
+
+    private static string GetHarmonyOwnershipShapeToken(ConflictFinding finding)
+    {
+        return GetHarmonyProfileToken(finding, "ownership-shape")
+            ?? "unknown";
+    }
+
+    private static string GetHarmonyTargetFamilyToken(ConflictFinding finding)
+    {
+        return GetHarmonyProfileToken(finding, "target-family")
+            ?? "unknown";
+    }
+
+    private static string? GetHarmonyProfileToken(ConflictFinding finding, string key)
+    {
+        string prefix = $"harmony-profile:{key}=";
+        return finding.Evidence.FirstOrDefault(e => e.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            ?[prefix.Length..]
+            .Trim()
+            .ToLowerInvariant();
+    }
+
+    private static string ToDisplayHarmonyToken(string token)
+    {
+        return token switch
+        {
+            "postfix-only" => "postfix-only",
+            "prefix-mix" => "prefix mix",
+            "transpiler-present" => "transpiler present",
+            "finalizer-only" => "finalizer-only",
+            "same-priority-ambiguous" => "same-priority ambiguous",
+            "explicitly-ordered" => "explicitly ordered",
+            "single-kind-duplicated" => "same patch kind duplicated across mods",
+            "stacked-mixed-kinds" => "stacked mixed patch kinds",
+            "single-module-repeated" => "one module repeats ownership",
+            "multi-module" => "multi-module overlap",
+            "settlement-campaign-rule" => "settlement or campaign rule",
+            "economic-calculation" => "economic or calculation path",
+            "mission-startup" => "mission or battle startup",
+            "access-gate" => "access or entry gate",
+            _ => token.Replace('-', ' '),
+        };
+    }
+
+    private static string ToDisplayHarmonySource(string token)
+    {
+        return token switch
+        {
+            "static" => "mod metadata",
+            "duplicate-block" => "Harmony Patch Scanner duplicate block",
+            "log-graph" => "Harmony graph log",
+            _ => token.Replace('-', ' '),
+        };
+    }
+
     private static bool IsPostfixOnlyHarmonyFinding(ConflictFinding finding)
     {
         return finding.Evidence.Any(e =>
-            e.Equals("harmony-profile:postfix-only", StringComparison.OrdinalIgnoreCase));
+                   e.Equals("harmony-profile:postfix-only", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(GetHarmonyPatchShapeToken(finding), "postfix-only", StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed record SaveRiskEvidenceEntry(

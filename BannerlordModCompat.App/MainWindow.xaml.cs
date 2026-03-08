@@ -980,72 +980,27 @@ public partial class MainWindow : Window
         _allLoadOrderRows.Clear();
         _loadOrderMoveRows.Clear();
         _loadOrderInactiveRows.Clear();
-        PlayerLoadOrderProjection projection = PlayerLoadOrderProjectionBuilder.BuildEnabledSingleplayerProjection(report.LoadOrder);
+        PlayerLoadOrderProjection projection = PlayerLoadOrderProjectionBuilder.BuildEnabledSingleplayerProjection(
+            report.LoadOrder,
+            report.Modules,
+            report.Conflicts);
         LoadOrderRecommendation viewRecommendation = projection.Recommendation;
-        IReadOnlyList<string> inactiveInstalledIds = projection.InactiveInstalledModuleIds;
-
-        Dictionary<string, ModuleManifest> modulesById = report.Modules
-            .ToDictionary(m => m.Id, StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, int> currentIndex = viewRecommendation.CurrentOrder
-            .Select((id, idx) => new { id, idx })
-            .GroupBy(x => x.id, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First().idx, StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, int> suggestedIndex = viewRecommendation.SuggestedOrder
-            .Select((id, idx) => new { id, idx })
-            .GroupBy(x => x.id, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First().idx, StringComparer.OrdinalIgnoreCase);
-
-        HashSet<string> dependencySensitive = [];
-        foreach (ModuleManifest module in report.Modules)
+        foreach (PlayerLoadOrderProjectionRow projectedRow in projection.Rows)
         {
-            foreach (ModuleDependency dep in module.Dependencies)
-            {
-                dependencySensitive.Add(module.Id);
-                dependencySensitive.Add(dep.Id);
-            }
-        }
+            int suggestedPos = (projectedRow.SuggestedIndex ?? 0) + 1;
+            int currentPos = projectedRow.CurrentIndex.HasValue ? projectedRow.CurrentIndex.Value + 1 : 0;
+            int delta = projectedRow.CurrentIndex.HasValue && projectedRow.SuggestedIndex.HasValue
+                ? suggestedPos - currentPos
+                : 0;
 
-        HashSet<string> overlapSensitive = report.Conflicts
-            .Where(c =>
-                c.Category is ConflictCategory.HarmonyPatchConflict
-                or ConflictCategory.HarmonyPatchStack
-                or ConflictCategory.GameModelOverlap
-                or ConflictCategory.BehaviorEventOverlap
-                or ConflictCategory.MissionBehaviorOverlap
-                or ConflictCategory.LifecycleRegistrationOverlap)
-            .SelectMany(c => c.ModuleIds)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        HashSet<string> suggestedIds = viewRecommendation.SuggestedOrder
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        for (int i = 0; i < viewRecommendation.SuggestedOrder.Count; i++)
-        {
-            string moduleId = viewRecommendation.SuggestedOrder[i];
-            bool hasCurrent = currentIndex.TryGetValue(moduleId, out int currentIdxZeroBased);
-            int suggestedPos = i + 1;
-            int currentPos = hasCurrent ? currentIdxZeroBased + 1 : 0;
-            int delta = hasCurrent ? suggestedPos - currentPos : 0;
-            bool isChanged = !hasCurrent || delta != 0;
-
-            string action = !hasCurrent
+            string action = !projectedRow.CurrentIndex.HasValue
                 ? $"Enable at #{suggestedPos}"
                 : delta < 0
                     ? $"Move up {Math.Abs(delta)}"
                     : delta > 0
                         ? $"Move down {delta}"
                         : "Keep as is";
-
-            string whyText = !hasCurrent
-                ? "This module is installed but not active. The app does not auto-enable disabled modules."
-                : dependencySensitive.Contains(moduleId)
-                    ? "This module participates in dependency/order constraints from module metadata."
-                    : overlapSensitive.Contains(moduleId)
-                        ? "This module overlaps with others in Harmony/code analysis, so stable relative ordering matters."
-                    : delta == 0
-                        ? "Already in a good position for the current enabled dependency graph."
-                        : "Reordering helps dependencies and frameworks initialize in the expected sequence.";
-
-            string deltaText = !hasCurrent
+            string deltaText = !projectedRow.CurrentIndex.HasValue
                 ? "New"
                 : delta == 0
                     ? "0"
@@ -1054,41 +1009,19 @@ public partial class MainWindow : Window
                         : $"+{delta}";
 
             _allLoadOrderRows.Add(BuildLoadOrderRow(
-                moduleId,
-                modulesById,
-                hasCurrent ? currentPos.ToString() : "-",
-                suggestedPos.ToString(),
+                projectedRow,
+                projectedRow.CurrentIndex.HasValue ? currentPos.ToString() : "-",
+                projectedRow.SuggestedIndex.HasValue ? suggestedPos.ToString() : "-",
                 deltaText,
                 action,
-                whyText,
-                isChanged,
-                hasCurrent ? Math.Abs(delta) : suggestedPos,
-                isInactiveInstalled: false));
+                projectedRow.ReasonSummary,
+                projectedRow.IsChanged,
+                projectedRow.CurrentIndex.HasValue ? Math.Abs(delta) : suggestedPos));
         }
 
-        foreach (string moduleId in viewRecommendation.CurrentOrder.Where(id => !suggestedIds.Contains(id)))
+        foreach (PlayerLoadOrderProjectionRow inactiveRow in projection.InactiveInstalledRows)
         {
-            if (!currentIndex.TryGetValue(moduleId, out int currentIdxZeroBased))
-            {
-                continue;
-            }
-
-            _allLoadOrderRows.Add(BuildLoadOrderRow(
-                moduleId,
-                modulesById,
-                (currentIdxZeroBased + 1).ToString(),
-                "-",
-                "-",
-                "Not in suggested set",
-                "No safe position was inferred for this module in the suggested order. Review manually.",
-                isChanged: true,
-                absoluteShift: 0,
-                isInactiveInstalled: false));
-        }
-
-        foreach (string moduleId in inactiveInstalledIds)
-        {
-            _loadOrderInactiveRows.Add(BuildInactiveModuleDisplay(moduleId, modulesById));
+            _loadOrderInactiveRows.Add(BuildInactiveModuleDisplay(inactiveRow));
         }
 
         BorderLoadOrderInactiveModules.Visibility = _loadOrderInactiveRows.Count > 0
@@ -1118,23 +1051,20 @@ public partial class MainWindow : Window
     }
 
     private LoadOrderRow BuildLoadOrderRow(
-        string moduleId,
-        IReadOnlyDictionary<string, ModuleManifest> modulesById,
+        PlayerLoadOrderProjectionRow projectedRow,
         string currentIndexText,
         string suggestedIndexText,
         string deltaText,
         string actionText,
         string whyText,
         bool isChanged,
-        int absoluteShift,
-        bool isInactiveInstalled)
+        int absoluteShift)
     {
-        modulesById.TryGetValue(moduleId, out ModuleManifest? manifest);
-        (string moduleTypeText, Brush background, Brush border, Brush foreground) = GetLoadOrderTypeChrome(manifest, moduleId);
+        (string moduleTypeText, Brush background, Brush border, Brush foreground) = GetLoadOrderTypeChrome(projectedRow);
 
         return new LoadOrderRow
         {
-            ModuleId = moduleId,
+            ModuleId = projectedRow.ModuleId,
             ModuleTypeText = moduleTypeText,
             ModuleTypeBadgeBackground = background,
             ModuleTypeBadgeBorder = border,
@@ -1144,28 +1074,25 @@ public partial class MainWindow : Window
             DeltaText = deltaText,
             ActionText = actionText,
             WhyText = whyText,
-            IsOfficial = manifest?.IsOfficial == true || ModuleTaxonomy.IsOfficial(moduleId),
-            IsFramework = manifest?.IsFramework == true || ModuleTaxonomy.IsFramework(moduleId),
-            IsCustom = manifest?.IsCustom ?? ModuleTaxonomy.IsCustom(moduleId),
+            IsOfficial = projectedRow.IsOfficial,
+            IsFramework = projectedRow.IsFramework,
+            IsCustom = projectedRow.IsCustom,
             IsActionable = isChanged,
-            IsInactiveInstalled = isInactiveInstalled,
+            IsInactiveInstalled = projectedRow.IsInactiveInstalled,
             IsChanged = isChanged,
             AbsoluteShift = absoluteShift,
         };
     }
 
     private (string TypeText, Brush Background, Brush Border, Brush Foreground) GetLoadOrderTypeChrome(
-        ModuleManifest? manifest,
-        string moduleId)
+        PlayerLoadOrderProjectionRow projectedRow)
     {
-        bool official = manifest?.IsOfficial == true || ModuleTaxonomy.IsOfficial(moduleId);
-        bool framework = manifest?.IsFramework == true || ModuleTaxonomy.IsFramework(moduleId);
-        if (official)
+        if (projectedRow.IsOfficial)
         {
             return ("Official", ParseBrush("#223125"), ParseBrush("#6A7B50"), ParseBrush("#E2F0D5"));
         }
 
-        if (framework)
+        if (projectedRow.IsFramework)
         {
             return ("Framework", ParseBrush("#1E2430"), ParseBrush("#5E708D"), ParseBrush("#DDE7F7"));
         }
@@ -1173,17 +1100,14 @@ public partial class MainWindow : Window
         return ("Custom", ParseBrush("#30231A"), ParseBrush("#8B6736"), ParseBrush("#F4E4C6"));
     }
 
-    private string BuildInactiveModuleDisplay(
-        string moduleId,
-        IReadOnlyDictionary<string, ModuleManifest> modulesById)
+    private static string BuildInactiveModuleDisplay(PlayerLoadOrderProjectionRow row)
     {
-        modulesById.TryGetValue(moduleId, out ModuleManifest? manifest);
-        string type = manifest?.IsOfficial == true || ModuleTaxonomy.IsOfficial(moduleId)
+        string type = row.IsOfficial
             ? "Official"
-            : manifest?.IsFramework == true || ModuleTaxonomy.IsFramework(moduleId)
+            : row.IsFramework
                 ? "Framework"
                 : "Custom";
-        return $"{moduleId} ({type})";
+        return $"{row.ModuleId} ({type})";
     }
 
     private RuntimeChainRow? GetSelectedRuntimeChainRow()
@@ -2887,6 +2811,14 @@ public partial class MainWindow : Window
 
     private static string BuildRuntimeSignalLabel(ConflictFinding finding)
     {
+        if (finding.Category == ConflictCategory.RuntimeLoaderFailure
+            && finding.StructuredEvidence?.Details is not null
+            && finding.StructuredEvidence.Details.TryGetValue("issue-summary", out string? summary)
+            && !string.IsNullOrWhiteSpace(summary))
+        {
+            return summary;
+        }
+
         string? marker = finding.Evidence.FirstOrDefault(e =>
             e.StartsWith("runtime-correlation:", StringComparison.OrdinalIgnoreCase));
         if (!string.IsNullOrWhiteSpace(marker))

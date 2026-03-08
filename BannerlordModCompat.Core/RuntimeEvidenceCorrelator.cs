@@ -96,6 +96,9 @@ public sealed class RuntimeEvidenceCorrelator
                 LikelyInGameOutcome = AppendRuntimeOutcome(finding.LikelyInGameOutcome),
                 Recommendation = AppendRuntimeRecommendation(finding.Recommendation),
                 Evidence = mergedEvidence,
+                StructuredEvidence = aggregate.HasLoaderSignal || aggregate.HasCrashSignal
+                    ? EvidenceProfiles.AddSources(finding.StructuredEvidence, FindingEvidenceSource.RuntimeLog)
+                    : finding.StructuredEvidence,
             };
             promotedCount++;
         }

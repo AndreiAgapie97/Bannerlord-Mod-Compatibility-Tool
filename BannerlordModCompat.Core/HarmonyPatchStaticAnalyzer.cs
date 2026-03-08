@@ -11,6 +11,7 @@ public sealed class HarmonyPatchStaticAnalyzer
     private const string HarmonyPostfixAttribute = "HarmonyPostfix";
     private const string HarmonyTranspilerAttribute = "HarmonyTranspiler";
     private const string HarmonyFinalizerAttribute = "HarmonyFinalizer";
+    private const string HarmonyPriorityAttribute = "HarmonyPriority";
     private const string HarmonyTargetMethodAttribute = "HarmonyTargetMethod";
     private const string HarmonyTargetMethodsAttribute = "HarmonyTargetMethods";
     private const string UnknownTarget = "<unknown>";
@@ -125,6 +126,7 @@ public sealed class HarmonyPatchStaticAnalyzer
             string patchTypeName = GetTypeFullName(reader, typeHandle);
 
             List<PatchTargetHint> typeHints = ReadPatchHints(reader, typeDef.GetCustomAttributes());
+            int? typePriority = ReadHarmonyPriority(reader, typeDef.GetCustomAttributes());
             bool typeDeclaresDynamicTarget = HasHarmonyAttribute(reader, typeDef.GetCustomAttributes(), HarmonyTargetMethodAttribute)
                 || HasHarmonyAttribute(reader, typeDef.GetCustomAttributes(), HarmonyTargetMethodsAttribute);
 
@@ -139,6 +141,7 @@ public sealed class HarmonyPatchStaticAnalyzer
                 }
 
                 List<PatchTargetHint> methodHints = ReadPatchHints(reader, methodDef.GetCustomAttributes());
+                int? methodPriority = ReadHarmonyPriority(reader, methodDef.GetCustomAttributes()) ?? typePriority;
                 bool methodDeclaresDynamicTarget = HasHarmonyAttribute(reader, methodDef.GetCustomAttributes(), HarmonyTargetMethodAttribute)
                     || HasHarmonyAttribute(reader, methodDef.GetCustomAttributes(), HarmonyTargetMethodsAttribute);
 
@@ -166,7 +169,8 @@ public sealed class HarmonyPatchStaticAnalyzer
                             TargetKey: hint.TargetKey,
                             PatchKind: kind,
                             PatchMethod: patchMethodName,
-                            EvidencePath: $"{assemblyPath}::{patchMethodName}"
+                            EvidencePath: $"{assemblyPath}::{patchMethodName}",
+                            Priority: methodPriority
                         ));
                     }
                 }
@@ -229,77 +233,61 @@ public sealed class HarmonyPatchStaticAnalyzer
                 continue;
             }
 
-            string[] patchKinds = targetGroup
+            List<string> patchKinds = targetGroup
                 .Select(r => r.PatchKind)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+                .ToList();
 
-            bool hasTranspiler = patchKinds.Any(x => x.Equals("Transpiler", StringComparison.OrdinalIgnoreCase));
-            bool postfixOnly = IsPostfixOnlyPatchSet(patchKinds);
-            bool duplicateKindAcrossMods = targetGroup
-                .GroupBy(r => r.PatchKind, StringComparer.OrdinalIgnoreCase)
-                .Any(g => g.Select(x => x.ModuleId).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1);
+            HarmonyOrderState orderState = DetermineStaticOrderState(targetGroup, modules);
+            HarmonyOwnershipShape ownershipShape = HarmonyFindingProfiles.DetermineOwnershipShape(
+                targetGroup.Select(record => (record.ModuleId, record.PatchKind)));
+            HarmonyRiskProfile profile = HarmonyFindingProfiles.Create(
+                targetGroup.Key,
+                patchKinds,
+                orderState,
+                ownershipShape,
+                hasStaticMetadataEvidence: true,
+                hasDuplicateScannerEvidence: false,
+                hasOrderingGraphEvidence: false,
+                hasRuntimeCorrelationEvidence: false,
+                moduleCount: modules.Length);
+            HarmonyRiskAssessment assessment = HarmonyFindingProfiles.Assess(profile);
 
-            ConflictCategory category = postfixOnly
-                ? ConflictCategory.HarmonyPatchStack
-                : (hasTranspiler || duplicateKindAcrossMods)
-                ? ConflictCategory.HarmonyPatchConflict
-                : ConflictCategory.HarmonyPatchStack;
-            ConflictSeverity severity = postfixOnly
-                ? ConflictSeverity.Low
-                : hasTranspiler
-                ? ConflictSeverity.Critical
-                : duplicateKindAcrossMods
-                    ? ConflictSeverity.High
-                    : ConflictSeverity.Medium;
-            double confidence = postfixOnly
-                ? 0.62
-                : hasTranspiler
-                ? 0.84
-                : duplicateKindAcrossMods
-                    ? 0.76
-                    : 0.66;
-
-            string kindText = string.Join(", ", patchKinds);
-            string reason = postfixOnly
-                ? $"Static Harmony scan found postfix stack on '{targetGroup.Key}' ({kindText})."
-                : category == ConflictCategory.HarmonyPatchConflict
-                ? $"Static Harmony scan found potentially conflicting patches on '{targetGroup.Key}' ({kindText})."
-                : $"Static Harmony scan found patch stack on '{targetGroup.Key}' ({kindText}).";
-            string outcome = postfixOnly
-                ? "These are postfix patches. They usually stack safely, but final values or side effects can still depend on patch order."
-                : category == ConflictCategory.HarmonyPatchConflict
-                ? "Execution order or IL rewriting can change core logic and trigger runtime instability."
-                : "Patch stacking may be valid but can still alter behavior based on ordering and side effects.";
-            string recommendation = postfixOnly
-                ? "Keep the current mod stack together and validate the affected gameplay path first. Only isolate one patch source if you can reproduce a real symptom on this method."
-                : category == ConflictCategory.HarmonyPatchConflict
-                ? "Set explicit Harmony priority/before/after rules or disable one patch source for this method."
-                : "Verify this patched method path in gameplay and keep explicit patch ordering where possible.";
+            string kindText = patchKinds.Count == 0
+                ? "unknown patch kinds"
+                : string.Join(", ", patchKinds);
 
             List<string> evidence = targetGroup
                 .Select(r => r.EvidencePath)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(8)
                 .ToList();
-            evidence.Add($"harmony-target:{targetGroup.Key}");
-            evidence.Add($"harmony-kinds:{kindText}");
-            if (postfixOnly)
+            evidence.Add($"{HarmonyFindingProfiles.TargetPrefix}{targetGroup.Key}");
+            evidence.Add($"{HarmonyFindingProfiles.KindsPrefix}{kindText}");
+            List<string> priorityTokens = targetGroup
+                .Where(r => r.Priority.HasValue)
+                .GroupBy(r => r.ModuleId, StringComparer.OrdinalIgnoreCase)
+                .Select(group => $"{group.Key}:{group.Select(r => r.Priority!.Value).Distinct().OrderBy(x => x).First()}")
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (priorityTokens.Count > 0)
             {
-                evidence.Add("harmony-profile:postfix-only");
+                evidence.Add($"{HarmonyFindingProfiles.PriorityPrefix}{string.Join(", ", priorityTokens)}");
             }
+            evidence.AddRange(HarmonyFindingProfiles.BuildEvidenceTags(profile));
 
             findings.Add(new ConflictFinding
             {
-                Category = category,
-                Severity = severity,
-                Confidence = confidence,
+                Category = assessment.Category,
+                Severity = assessment.Severity,
+                Confidence = assessment.Confidence,
                 ModuleIds = modules,
-                Reason = reason,
-                LikelyInGameOutcome = outcome,
-                Recommendation = recommendation,
+                Reason = assessment.Reason,
+                LikelyInGameOutcome = assessment.LikelyOutcome,
+                Recommendation = assessment.Recommendation,
                 Evidence = evidence,
+                StructuredEvidence = HarmonyFindingProfiles.BuildStructuredEvidence(profile),
             });
         }
 
@@ -310,10 +298,32 @@ public sealed class HarmonyPatchStaticAnalyzer
             .ToList();
     }
 
-    private static bool IsPostfixOnlyPatchSet(IReadOnlyCollection<string> patchKinds)
+    private static HarmonyOrderState DetermineStaticOrderState(
+        IGrouping<string, StaticPatchRecord> targetGroup,
+        IReadOnlyList<string> modules
+    )
     {
-        return patchKinds.Count > 0
-            && patchKinds.All(kind => kind.Equals("Postfix", StringComparison.OrdinalIgnoreCase));
+        Dictionary<string, int?> priorityByModule = modules.ToDictionary(moduleId => moduleId, _ => (int?)null, StringComparer.OrdinalIgnoreCase);
+        foreach (IGrouping<string, StaticPatchRecord> moduleGroup in targetGroup.GroupBy(r => r.ModuleId, StringComparer.OrdinalIgnoreCase))
+        {
+            List<int> priorities = moduleGroup
+                .Where(record => record.Priority.HasValue)
+                .Select(record => record.Priority!.Value)
+                .Distinct()
+                .ToList();
+            if (priorities.Count == 1)
+            {
+                priorityByModule[moduleGroup.Key] = priorities[0];
+            }
+        }
+
+        if (priorityByModule.Values.All(priority => priority.HasValue)
+            && priorityByModule.Values.Select(priority => priority!.Value).Distinct().Count() == modules.Count)
+        {
+            return HarmonyOrderState.ExplicitlyOrdered;
+        }
+
+        return HarmonyOrderState.Unknown;
     }
 
     private static List<PatchTargetHint> BuildEffectiveHints(
@@ -399,6 +409,49 @@ public sealed class HarmonyPatchStaticAnalyzer
         }
 
         return kinds.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static int? ReadHarmonyPriority(MetadataReader reader, CustomAttributeHandleCollection attributes)
+    {
+        foreach (CustomAttributeHandle attrHandle in attributes)
+        {
+            CustomAttribute attr = reader.GetCustomAttribute(attrHandle);
+            string? attrType = GetAttributeTypeName(reader, attr);
+            if (!IsHarmonyAttribute(attrType, HarmonyPriorityAttribute))
+            {
+                continue;
+            }
+
+            int? priority = TryDecodePriorityAttribute(attr);
+            if (priority.HasValue)
+            {
+                return priority.Value;
+            }
+        }
+
+        return null;
+    }
+
+    private static int? TryDecodePriorityAttribute(CustomAttribute attr)
+    {
+        try
+        {
+            CustomAttributeValue<string> value = attr.DecodeValue(TypeProvider);
+            foreach (CustomAttributeTypedArgument<string> fixedArg in value.FixedArguments)
+            {
+                if (fixedArg.Type.Equals("System.Int32", StringComparison.OrdinalIgnoreCase)
+                    && fixedArg.Value is int priority)
+                {
+                    return priority;
+                }
+            }
+        }
+        catch
+        {
+            return null;
+        }
+
+        return null;
     }
 
     private static PatchTargetHint DecodeHarmonyPatchHint(MetadataReader reader, CustomAttribute attr)
@@ -616,7 +669,8 @@ public sealed class HarmonyPatchStaticAnalyzer
         string TargetKey,
         string PatchKind,
         string PatchMethod,
-        string EvidencePath
+        string EvidencePath,
+        int? Priority
     );
 
     private sealed class MetadataTypeNameProvider : ICustomAttributeTypeProvider<string>

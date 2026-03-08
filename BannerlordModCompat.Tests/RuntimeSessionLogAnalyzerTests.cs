@@ -77,6 +77,11 @@ public class RuntimeSessionLogAnalyzerTests
             Assert.Contains("BadMod", loader.ModuleIds, StringComparer.OrdinalIgnoreCase);
             Assert.Contains(loader.Evidence, e =>
                 e.Contains("launcher_log_654321.txt", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(loader.StructuredEvidence);
+            Assert.Equal(FindingEvidenceScope.Session, loader.StructuredEvidence!.Scope);
+            Assert.Contains(FindingEvidenceSource.RuntimeLog, loader.StructuredEvidence.Sources);
+            Assert.Contains(FindingEvidenceKind.RuntimeLoaderIssue, loader.StructuredEvidence.Kinds);
+            Assert.Equal("loader-failure", loader.StructuredEvidence.Details["issue-kind"]);
         }
         finally
         {
@@ -124,12 +129,17 @@ public class RuntimeSessionLogAnalyzerTests
             ).ToList();
 
             ConflictFinding recurring = Assert.Single(findings, f =>
-                f.Reason.Contains("Recurring runtime incident cluster", StringComparison.OrdinalIgnoreCase));
+                f.StructuredEvidence?.Details.TryGetValue("recurrence-count", out string? value) == true
+                && value == "2");
             Assert.Equal(ConflictCategory.RuntimeLoaderFailure, recurring.Category);
+            Assert.Contains("Recurring", recurring.Reason, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(recurring.Evidence, e =>
                 e.StartsWith("cluster-signature:", StringComparison.OrdinalIgnoreCase));
             Assert.Contains(recurring.Evidence, e =>
                 e.StartsWith("cluster-session-count:", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(recurring.StructuredEvidence);
+            Assert.Equal("loader-failure", recurring.StructuredEvidence!.Details["issue-kind"]);
+            Assert.Equal("2", recurring.StructuredEvidence.Details["recurrence-count"]);
         }
         finally
         {
@@ -212,6 +222,76 @@ public class RuntimeSessionLogAnalyzerTests
             ).ToList();
 
             Assert.DoesNotContain(findings, f => f.Category == ConflictCategory.RuntimeCrashSession);
+        }
+        finally
+        {
+            DeleteTempRoot(tempRoot);
+        }
+    }
+
+    [Fact]
+    public void Analyze_ClassifiesMissingMethodAsConcreteRuntimeIssue()
+    {
+        string tempRoot = CreateTempRoot();
+        try
+        {
+            string rglErrorsPath = Path.Combine(tempRoot, "rgl_log_errors_999001.txt");
+            File.WriteAllLines(rglErrorsPath,
+            [
+                "System.MissingMethodException: Method not found: 'Void TaleWorlds.CampaignSystem.Campaign.AddBehavior()'.",
+            ]);
+
+            RuntimeSessionLogAnalyzer analyzer = new();
+            List<string> warnings = [];
+            List<ConflictFinding> findings = analyzer.Analyze(
+                modules:
+                [
+                    BuildModule("BadPatch"),
+                ],
+                currentOrder: ["BadPatch"],
+                customOnlyFocus: false,
+                warnings: warnings,
+                logsRootOverride: tempRoot
+            ).ToList();
+
+            ConflictFinding loader = Assert.Single(findings, f => f.Category == ConflictCategory.RuntimeLoaderFailure);
+            Assert.NotNull(loader.StructuredEvidence);
+            Assert.Equal("missing-method", loader.StructuredEvidence!.Details["issue-kind"]);
+            Assert.Contains("API mismatch", loader.StructuredEvidence.Details["issue-summary"], StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DeleteTempRoot(tempRoot);
+        }
+    }
+
+    [Fact]
+    public void Analyze_DoesNotSurfaceGenericErrorNoiseWithoutConcreteIssueSignature()
+    {
+        string tempRoot = CreateTempRoot();
+        try
+        {
+            string launcherPath = Path.Combine(tempRoot, "launcher_log_999002.txt");
+            File.WriteAllLines(launcherPath,
+            [
+                "ERROR: something failed while doing a thing",
+                "ERROR: generic error marker without dll or exception detail",
+            ]);
+
+            RuntimeSessionLogAnalyzer analyzer = new();
+            List<string> warnings = [];
+            List<ConflictFinding> findings = analyzer.Analyze(
+                modules:
+                [
+                    BuildModule("ModA"),
+                ],
+                currentOrder: ["ModA"],
+                customOnlyFocus: false,
+                warnings: warnings,
+                logsRootOverride: tempRoot
+            ).ToList();
+
+            Assert.Empty(findings);
         }
         finally
         {

@@ -301,6 +301,92 @@ public class CompatibilityAnalyzerBehaviorTests
         Assert.Equal(ConflictCategory.SaveFileRisk, finding.Category);
         Assert.Contains(finding.Evidence, e => e.Contains("Byz1071Test.sav|missing:AIInfluence,RBM", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(finding.Evidence, e => e.Contains("Ironman6d9dd718e5d7.sav|missing:RBM", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(finding.StructuredEvidence);
+        Assert.Equal(FindingEvidenceScope.Save, finding.StructuredEvidence!.Scope);
+        Assert.Contains(FindingEvidenceSource.SaveScan, finding.StructuredEvidence.Sources);
+        Assert.Contains(FindingEvidenceKind.MissingSaveMod, finding.StructuredEvidence.Kinds);
+        Assert.Equal("2", finding.StructuredEvidence.Details["affected-save-count"]);
+        Assert.Equal("2", finding.StructuredEvidence.Details["missing-mod-count"]);
+    }
+
+    [Fact]
+    public void MergeHarmonyFindings_MergesStaticAndLogEvidenceIntoSingleFinding()
+    {
+        List<ModuleManifest> modules =
+        [
+            BuildModule("CustomA"),
+            BuildModule("CustomB"),
+        ];
+
+        List<ConflictFinding> findings =
+        [
+            NewHarmonyFinding(
+                ConflictCategory.HarmonyPatchStack,
+                ConflictSeverity.Low,
+                ["CustomA", "CustomB"],
+                "TaleWorlds.CampaignSystem.GameComponents.DefaultSettlementFoodModel::CalculateTownFoodStocksChange(Town)",
+                "Postfix",
+                "static",
+                "postfix-only",
+                "unknown",
+                "multi-module",
+                "settlement-campaign-rule"),
+            NewHarmonyFinding(
+                ConflictCategory.HarmonyPatchConflict,
+                ConflictSeverity.High,
+                ["CustomA", "CustomB"],
+                "TaleWorlds.CampaignSystem.GameComponents.DefaultSettlementFoodModel::CalculateTownFoodStocksChange(Town)",
+                "Postfix",
+                "log-graph",
+                "postfix-only",
+                "same-priority-ambiguous",
+                "multi-module",
+                "settlement-campaign-rule",
+                extraEvidence:
+                [
+                    "harmony-graph:modules=2;ops=2;edges=0;unordered=0;ambiguous=1;cycle=0",
+                ]),
+        ];
+
+        MethodInfo method = GetPrivateStaticMethod("MergeHarmonyFindings", [typeof(IReadOnlyList<ConflictFinding>), typeof(IReadOnlyList<ModuleManifest>)]);
+        List<ConflictFinding> merged = ((IEnumerable<ConflictFinding>)method.Invoke(null, [findings, modules])!).ToList();
+
+        ConflictFinding finding = Assert.Single(merged);
+        Assert.Equal(ConflictCategory.HarmonyPatchStack, finding.Category);
+        Assert.Equal(ConflictSeverity.Low, finding.Severity);
+        Assert.Contains(finding.Evidence, e => e.Equals("harmony-source:static", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(finding.Evidence, e => e.Equals("harmony-source:log-graph", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(finding.Evidence, e => e.Equals("harmony-profile:order-state=same-priority-ambiguous", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void MergeHarmonyFindings_SuppressesTrivialStaticOnlyOrderedPostfixStack()
+    {
+        List<ModuleManifest> modules =
+        [
+            BuildModule("CustomA"),
+            BuildModule("CustomB"),
+        ];
+
+        List<ConflictFinding> findings =
+        [
+            NewHarmonyFinding(
+                ConflictCategory.HarmonyPatchStack,
+                ConflictSeverity.Low,
+                ["CustomA", "CustomB"],
+                "CustomNamespace.Patches.Host::Apply()",
+                "Postfix",
+                "static",
+                "postfix-only",
+                "explicitly-ordered",
+                "multi-module",
+                "unknown"),
+        ];
+
+        MethodInfo method = GetPrivateStaticMethod("MergeHarmonyFindings", [typeof(IReadOnlyList<ConflictFinding>), typeof(IReadOnlyList<ModuleManifest>)]);
+        List<ConflictFinding> merged = ((IEnumerable<ConflictFinding>)method.Invoke(null, [findings, modules])!).ToList();
+
+        Assert.Empty(merged);
     }
 
     private static ModuleManifest BuildModule(
@@ -344,6 +430,58 @@ public class CompatibilityAnalyzerBehaviorTests
             ModuleIds = moduleIds ?? ["A", "B"],
             Reason = $"{category} test",
             Evidence = [],
+        };
+    }
+
+    private static ConflictFinding NewHarmonyFinding(
+        ConflictCategory category,
+        ConflictSeverity severity,
+        IReadOnlyList<string> moduleIds,
+        string target,
+        string kinds,
+        string source,
+        string patchShape,
+        string orderState,
+        string ownershipShape,
+        string targetFamily,
+        IReadOnlyList<string>? extraEvidence = null
+    )
+    {
+        List<string> evidence =
+        [
+            $"harmony-target:{target}",
+            $"harmony-kinds:{kinds}",
+            $"harmony-source:{source}",
+            $"harmony-profile:patch-shape={patchShape}",
+            $"harmony-profile:order-state={orderState}",
+            $"harmony-profile:ownership-shape={ownershipShape}",
+            $"harmony-profile:target-family={targetFamily}",
+            $"harmony-profile:module-count={moduleIds.Count}",
+            "harmony-profile:unordered-pairs=0",
+            "harmony-profile:ambiguous-pairs=0",
+            "harmony-profile:explicit-edges=0",
+            "harmony-profile:cycle=0",
+        ];
+        if (patchShape.Equals("postfix-only", StringComparison.OrdinalIgnoreCase))
+        {
+            evidence.Add("harmony-profile:postfix-only");
+        }
+
+        if (extraEvidence is not null)
+        {
+            evidence.AddRange(extraEvidence);
+        }
+
+        return new ConflictFinding
+        {
+            Category = category,
+            Severity = severity,
+            Confidence = 0.70,
+            ModuleIds = moduleIds,
+            Reason = "Harmony test finding",
+            LikelyInGameOutcome = "Harmony test outcome",
+            Recommendation = "Harmony test recommendation",
+            Evidence = evidence,
         };
     }
 

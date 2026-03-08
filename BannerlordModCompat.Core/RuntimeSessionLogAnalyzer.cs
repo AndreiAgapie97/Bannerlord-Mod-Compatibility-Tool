@@ -102,7 +102,13 @@ public sealed class RuntimeSessionLogAnalyzer
             .ToDictionary(m => m.Id, StringComparer.OrdinalIgnoreCase);
 
         HashSet<string> runtimeModules = ParseRuntimeModules(session, byId, warnings);
-        List<string> runtimeIssues = ParseRuntimeIssues(session, warnings, out bool hasCriticalRuntimeSignatures);
+        List<RuntimeIssueSignature> runtimeIssues = ParseRuntimeIssueSignatures(
+            session,
+            runtimeModules,
+            modules,
+            customOnlyFocus,
+            byId,
+            warnings);
 
         List<ConflictFinding> findings = [];
         ConflictFinding? mismatchFinding = BuildRuntimeModuleMismatchFinding(
@@ -120,11 +126,9 @@ public sealed class RuntimeSessionLogAnalyzer
         ConflictFinding? loaderFinding = BuildRuntimeLoaderFailureFinding(
             runtimeIssues,
             runtimeModules,
-            modules,
             customOnlyFocus,
             byId,
-            session,
-            hasCriticalRuntimeSignatures
+            session
         );
         if (loaderFinding is not null)
         {
@@ -511,17 +515,24 @@ public sealed class RuntimeSessionLogAnalyzer
             LikelyInGameOutcome = "Analyzer results may not match real gameplay profile if runtime and launcher module sets are out of sync.",
             Recommendation = "Sync LauncherData with the actual runtime module set, then rerun compatibility and load-order validation.",
             Evidence = evidence.Where(x => !string.IsNullOrWhiteSpace(x)).Take(12).ToList(),
+            StructuredEvidence = EvidenceProfiles.Create(
+                FindingEvidenceScope.Session,
+                [FindingEvidenceSource.RuntimeLog, FindingEvidenceSource.LauncherOrder],
+                [FindingEvidenceKind.RuntimeModuleDrift],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["runtime-only-count"] = extraInRuntime.Count.ToString(CultureInfo.InvariantCulture),
+                    ["order-only-count"] = missingInRuntime.Count.ToString(CultureInfo.InvariantCulture),
+                }),
         };
     }
 
     private static ConflictFinding? BuildRuntimeLoaderFailureFinding(
-        IReadOnlyList<string> runtimeIssues,
+        IReadOnlyList<RuntimeIssueSignature> runtimeIssues,
         IReadOnlySet<string> runtimeModules,
-        IReadOnlyList<ModuleManifest> modules,
         bool customOnlyFocus,
         IReadOnlyDictionary<string, ModuleManifest> byId,
-        SessionFiles session,
-        bool hasCriticalRuntimeSignatures
+        SessionFiles session
     )
     {
         if (runtimeIssues.Count == 0)
@@ -529,24 +540,74 @@ public sealed class RuntimeSessionLogAnalyzer
             return null;
         }
 
-        List<string> moduleIds = InferModulesFromRuntimeIssues(
-            runtimeIssues,
-            runtimeModules,
-            modules,
-            customOnlyFocus,
-            byId
-        );
+        RuntimeIssueSignature strongest = runtimeIssues
+            .OrderByDescending(issue => issue.Criticality)
+            .ThenByDescending(issue => issue.ModuleIds.Count)
+            .ThenBy(issue => issue.Kind)
+            .First();
+
+        if (runtimeIssues.All(issue => issue.Kind == RuntimeIssueKind.GenericRuntimeError)
+            && strongest.ModuleIds.Count == 0)
+        {
+            return null;
+        }
+
+        List<string> moduleIds = runtimeIssues
+            .SelectMany(issue => issue.ModuleIds)
+            .Where(id => !customOnlyFocus || (byId.TryGetValue(id, out ModuleManifest? mod) && mod.IsCustom))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+            .Take(24)
+            .ToList();
+        if (moduleIds.Count == 0)
+        {
+            moduleIds = runtimeModules
+                .Where(id => !customOnlyFocus || (byId.TryGetValue(id, out ModuleManifest? mod) && mod.IsCustom))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+                .Take(24)
+                .ToList();
+        }
+
+        ConflictSeverity severity = runtimeIssues.Any(issue => issue.Criticality == RuntimeIssueCriticality.Critical)
+            ? ConflictSeverity.Critical
+            : runtimeIssues.Any(issue => issue.Criticality == RuntimeIssueCriticality.High)
+                ? ConflictSeverity.High
+                : ConflictSeverity.Medium;
+        double confidence = ComputeRuntimeLoaderConfidence(runtimeIssues);
+        string reason = runtimeIssues.Count == 1
+            ? $"Latest runtime logs show a concrete {ToDisplayLabel(strongest.Kind)} issue."
+            : $"Latest runtime logs show {runtimeIssues.Count} concrete loader/runtime issue signature(s). Strongest signal: {strongest.Summary}.";
+        string likelyOutcome = BuildRuntimeIssueOutcome(strongest.Kind);
+        string recommendation = BuildRuntimeIssueRecommendation(strongest.Kind);
+        List<string> evidence = PathEvidence(session).ToList();
+        evidence.AddRange(runtimeIssues
+            .Take(6)
+            .Select(issue => $"issue: {issue.Summary} [{issue.PrimarySource}]"));
 
         return new ConflictFinding
         {
             Category = ConflictCategory.RuntimeLoaderFailure,
-            Severity = hasCriticalRuntimeSignatures ? ConflictSeverity.Critical : ConflictSeverity.High,
-            Confidence = 0.92,
+            Severity = severity,
+            Confidence = confidence,
             ModuleIds = moduleIds,
-            Reason = $"Latest runtime logs contain {runtimeIssues.Count} loader/runtime failure signature(s).",
-            LikelyInGameOutcome = "Startup can fail or gameplay can crash when unresolved assembly/runtime faults are present.",
-            Recommendation = "Resolve loader/runtime errors in launch logs first, then validate module order and retest from a clean launch.",
-            Evidence = [.. PathEvidence(session), .. runtimeIssues.Take(8).Select(x => $"issue: {x}")],
+            Reason = reason,
+            LikelyInGameOutcome = likelyOutcome,
+            Recommendation = recommendation,
+            Evidence = evidence,
+            StructuredEvidence = EvidenceProfiles.Create(
+                FindingEvidenceScope.Session,
+                [FindingEvidenceSource.RuntimeLog],
+                [FindingEvidenceKind.RuntimeLoaderIssue],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["issue-kind"] = ToToken(strongest.Kind),
+                    ["issue-key"] = strongest.Key,
+                    ["issue-summary"] = strongest.Summary,
+                    ["criticality"] = ToToken(strongest.Criticality),
+                    ["issue-count"] = runtimeIssues.Count.ToString(CultureInfo.InvariantCulture),
+                    ["primary-source"] = strongest.PrimarySource,
+                }),
         };
     }
 
@@ -568,20 +629,23 @@ public sealed class RuntimeSessionLogAnalyzer
         foreach (SessionFiles session in sessions.Take(10))
         {
             HashSet<string> runtimeModules = ParseRuntimeModules(session, byId, warnings);
-            List<string> runtimeIssues = ParseRuntimeIssues(session, warnings, out bool hasCriticalRuntimeSignatures);
+            List<RuntimeIssueSignature> runtimeIssues = ParseRuntimeIssueSignatures(
+                session,
+                runtimeModules,
+                modules,
+                customOnlyFocus,
+                byId,
+                warnings);
 
             if (runtimeIssues.Count == 0)
             {
                 continue;
             }
 
-            HashSet<string> sessionModules = InferModulesFromRuntimeIssues(
-                runtimeIssues,
-                runtimeModules,
-                modules,
-                customOnlyFocus,
-                byId
-            ).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> sessionModules = runtimeIssues
+                .SelectMany(issue => issue.ModuleIds)
+                .Where(id => !customOnlyFocus || (byId.TryGetValue(id, out ModuleManifest? mod) && mod.IsCustom))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (sessionModules.Count == 0)
             {
                 foreach (string moduleId in runtimeModules)
@@ -605,7 +669,7 @@ public sealed class RuntimeSessionLogAnalyzer
             }
 
             HashSet<string> signatures = runtimeIssues
-                .Select(BuildIssueSignature)
+                .Select(issue => issue.Key)
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (signatures.Count == 0)
@@ -623,7 +687,7 @@ public sealed class RuntimeSessionLogAnalyzer
                 }
 
                 cluster.SessionKeys.Add(sessionKey);
-                cluster.HasCriticalRuntimeSignatures |= hasCriticalRuntimeSignatures;
+                cluster.HasCriticalRuntimeSignatures |= runtimeIssues.Any(issue => issue.Criticality == RuntimeIssueCriticality.Critical);
                 foreach (string moduleId in sessionModules)
                 {
                     cluster.ModuleCounts[moduleId] = cluster.ModuleCounts.TryGetValue(moduleId, out int count)
@@ -636,9 +700,9 @@ public sealed class RuntimeSessionLogAnalyzer
                     cluster.EvidencePaths.Add(path);
                 }
 
-                foreach (string issue in runtimeIssues.Take(5))
+                foreach (RuntimeIssueSignature issue in runtimeIssues.Take(5))
                 {
-                    cluster.SampleIssues.Add(issue);
+                    cluster.SampleIssues.Add(issue.Summary);
                 }
             }
         }
@@ -681,12 +745,12 @@ public sealed class RuntimeSessionLogAnalyzer
             0.97
         );
 
+        RuntimeIssueKind clusterKind = ClassifySignatureKind(best.Signature);
         string displaySignature = ToShortSignature(best.Signature);
-        string reason = $"Recurring runtime incident cluster detected: signature '{displaySignature}' appeared in "
+        string reason = $"Recurring {ToDisplayLabel(clusterKind)} signature detected: '{displaySignature}' appeared in "
             + $"{best.SessionKeys.Count}/{sessions.Count} recent session(s).";
-        string likelyOutcome = "Loader/runtime fault signature is repeating across sessions, indicating a stable incompatibility pattern.";
-        string recommendation = "Treat this as a recurring incident cluster: keep one baseline profile, then disable modules in cohorts and rerun "
-            + "until the repeated signature disappears. Preserve the same load order while isolating.";
+        string likelyOutcome = $"{BuildRuntimeIssueOutcome(clusterKind)} This signature is repeating across runs, which makes the signal much stronger than a one-off log line.";
+        string recommendation = $"{BuildRuntimeIssueRecommendation(clusterKind)} Keep one baseline profile and rerun the same gameplay path until the repeated signature disappears.";
 
         List<string> evidence = [];
         evidence.AddRange(best.EvidencePaths.Take(8));
@@ -708,49 +772,20 @@ public sealed class RuntimeSessionLogAnalyzer
             LikelyInGameOutcome = likelyOutcome,
             Recommendation = recommendation,
             Evidence = evidence,
+            StructuredEvidence = EvidenceProfiles.Create(
+                FindingEvidenceScope.Session,
+                [FindingEvidenceSource.RuntimeLog, FindingEvidenceSource.RuntimeCluster],
+                [FindingEvidenceKind.RuntimeLoaderIssue],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["issue-kind"] = ToToken(clusterKind),
+                    ["issue-key"] = best.Signature,
+                    ["issue-summary"] = displaySignature,
+                    ["criticality"] = best.HasCriticalRuntimeSignatures ? "critical" : "high",
+                    ["issue-count"] = best.SampleIssues.Count.ToString(CultureInfo.InvariantCulture),
+                    ["recurrence-count"] = best.SessionKeys.Count.ToString(CultureInfo.InvariantCulture),
+                }),
         };
-    }
-
-    private static string BuildIssueSignature(string issue)
-    {
-        string normalized = NormalizeIssue(issue).ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(normalized))
-        {
-            return string.Empty;
-        }
-
-        string anchor = SignatureAnchorTokens
-            .FirstOrDefault(token => normalized.Contains(token, StringComparison.OrdinalIgnoreCase))
-            ?? "runtime-error";
-        Match moduleMatch = ModulePathRegex.Match(issue);
-        if (moduleMatch.Success)
-        {
-            string moduleId = moduleMatch.Groups["id"].Value.Trim().ToLowerInvariant();
-            if (!string.IsNullOrWhiteSpace(moduleId))
-            {
-                return $"{anchor}|module:{moduleId}";
-            }
-        }
-
-        Match dllMatch = DllNameRegex.Match(issue);
-        if (dllMatch.Success)
-        {
-            string dll = dllMatch.Groups["dll"].Value.Trim().ToLowerInvariant();
-            if (!string.IsNullOrWhiteSpace(dll))
-            {
-                return $"{anchor}|dll:{dll}";
-            }
-        }
-
-        string compact = normalized
-            .Replace("0x", "0x*", StringComparison.OrdinalIgnoreCase)
-            .Replace("  ", " ", StringComparison.Ordinal);
-        if (compact.Length > 100)
-        {
-            compact = compact[..100];
-        }
-
-        return $"{anchor}|{compact}";
     }
 
     private static string BuildSessionKey(SessionFiles session)
@@ -786,54 +821,13 @@ public sealed class RuntimeSessionLogAnalyzer
             : signature[..96];
     }
 
-    private static List<string> ParseRuntimeIssues(
+    private static List<RuntimeIssueSignature> ParseRuntimeIssueSignatures(
         SessionFiles session,
-        List<string> warnings,
-        out bool hasCriticalRuntimeSignatures
-    )
-    {
-        HashSet<string> issues = new(StringComparer.OrdinalIgnoreCase);
-
-        foreach (string line in ReadLinesSafe(session.LauncherLogPath, maxLines: 10_000, warnings))
-        {
-            if (ContainsAny(line, LauncherErrorTokens))
-            {
-                issues.Add(NormalizeIssue(line));
-            }
-        }
-
-        foreach (string line in ReadLinesSafe(session.RglErrorLogPath, maxLines: 2_000, warnings))
-        {
-            if (!string.IsNullOrWhiteSpace(line))
-            {
-                issues.Add(NormalizeIssue(line));
-            }
-        }
-
-        foreach (string line in ReadTailLinesSafe(session.RglLogPath, tailCount: 4_000, warnings))
-        {
-            if (ContainsAny(line, RuntimeErrorTokens))
-            {
-                issues.Add(NormalizeIssue(line));
-            }
-        }
-
-        hasCriticalRuntimeSignatures = issues.Any(issue =>
-            issue.Contains("missingmethodexception", StringComparison.OrdinalIgnoreCase)
-            || issue.Contains("typeloadexception", StringComparison.OrdinalIgnoreCase)
-            || issue.Contains("could not load file or assembly", StringComparison.OrdinalIgnoreCase)
-            || issue.Contains("unhandled exception", StringComparison.OrdinalIgnoreCase)
-            || issue.Contains("stack trace", StringComparison.OrdinalIgnoreCase));
-
-        return issues.Take(80).ToList();
-    }
-
-    private static List<string> InferModulesFromRuntimeIssues(
-        IReadOnlyList<string> runtimeIssues,
         IReadOnlySet<string> runtimeModules,
         IReadOnlyList<ModuleManifest> modules,
         bool customOnlyFocus,
-        IReadOnlyDictionary<string, ModuleManifest> byId
+        IReadOnlyDictionary<string, ModuleManifest> byId,
+        List<string> warnings
     )
     {
         Dictionary<string, List<string>> moduleOwnersByDll = modules
@@ -842,66 +836,330 @@ public sealed class RuntimeSessionLogAnalyzer
             .ToDictionary(
                 g => g.Key,
                 g => g.Select(x => x.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-                StringComparer.OrdinalIgnoreCase
-            );
+                StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, RuntimeIssueAccumulator> issuesByKey = new(StringComparer.OrdinalIgnoreCase);
 
-        HashSet<string> inferred = new(StringComparer.OrdinalIgnoreCase);
-        foreach (string issue in runtimeIssues)
+        CollectRuntimeIssueSignatures(
+            issuesByKey,
+            ReadLinesSafe(session.LauncherLogPath, maxLines: 10_000, warnings),
+            "launcher",
+            modules,
+            customOnlyFocus,
+            byId,
+            moduleOwnersByDll);
+        CollectRuntimeIssueSignatures(
+            issuesByKey,
+            ReadLinesSafe(session.RglErrorLogPath, maxLines: 2_000, warnings),
+            "rgl-errors",
+            modules,
+            customOnlyFocus,
+            byId,
+            moduleOwnersByDll);
+        CollectRuntimeIssueSignatures(
+            issuesByKey,
+            ReadTailLinesSafe(session.RglLogPath, tailCount: 4_000, warnings),
+            "rgl",
+            modules,
+            customOnlyFocus,
+            byId,
+            moduleOwnersByDll);
+
+        List<RuntimeIssueSignature> signatures = issuesByKey.Values
+            .Select(acc => acc.Build())
+            .OrderByDescending(issue => issue.Criticality)
+            .ThenByDescending(issue => issue.ModuleIds.Count)
+            .ThenBy(issue => issue.Kind)
+            .ThenBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase)
+            .Take(80)
+            .ToList();
+        if (signatures.Count == 0
+            && runtimeModules.Count > 0
+            && ReadLinesSafe(session.LauncherLogPath, maxLines: 200, warnings).Any(line => ContainsAny(line, LauncherErrorTokens)))
         {
-            foreach (Match match in ModulePathRegex.Matches(issue))
-            {
-                string id = match.Groups["id"].Value.Trim();
-                if (string.IsNullOrWhiteSpace(id))
-                {
-                    continue;
-                }
+            warnings.Add("Runtime logs contained broad launcher error markers, but no concrete typed issue signature was strong enough to surface.");
+        }
 
-                if (byId.TryGetValue(id, out ModuleManifest? module))
-                {
-                    inferred.Add(module.Id);
-                }
-                else
-                {
-                    inferred.Add(id);
-                }
+        return signatures;
+    }
+
+    private static void CollectRuntimeIssueSignatures(
+        IDictionary<string, RuntimeIssueAccumulator> issuesByKey,
+        IEnumerable<string> lines,
+        string sourceLabel,
+        IReadOnlyList<ModuleManifest> modules,
+        bool customOnlyFocus,
+        IReadOnlyDictionary<string, ModuleManifest> byId,
+        IReadOnlyDictionary<string, List<string>> moduleOwnersByDll
+    )
+    {
+        foreach (string rawLine in lines)
+        {
+            if (!TryBuildRuntimeIssueSignature(
+                    rawLine,
+                    sourceLabel,
+                    modules,
+                    customOnlyFocus,
+                    byId,
+                    moduleOwnersByDll,
+                    out RuntimeIssueSignature? signature))
+            {
+                continue;
             }
 
-            foreach ((string dllName, List<string> owners) in moduleOwnersByDll)
+            if (signature is null)
             {
-                if (!issue.Contains(dllName, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                foreach (string owner in owners)
-                {
-                    inferred.Add(owner);
-                }
+                continue;
             }
 
-            foreach (ModuleManifest module in modules)
+            RuntimeIssueSignature concreteSignature = signature;
+            if (!issuesByKey.TryGetValue(concreteSignature.Key, out RuntimeIssueAccumulator? accumulator))
             {
-                if (ContainsToken(issue, module.Id) || ContainsToken(issue, module.Name))
-                {
-                    inferred.Add(module.Id);
-                }
+                accumulator = new RuntimeIssueAccumulator(
+                    concreteSignature.Key,
+                    concreteSignature.Kind,
+                    concreteSignature.Criticality,
+                    concreteSignature.Summary);
+                issuesByKey[concreteSignature.Key] = accumulator;
+            }
+
+            accumulator.Add(concreteSignature);
+        }
+    }
+
+    private static bool TryBuildRuntimeIssueSignature(
+        string rawLine,
+        string sourceLabel,
+        IReadOnlyList<ModuleManifest> modules,
+        bool customOnlyFocus,
+        IReadOnlyDictionary<string, ModuleManifest> byId,
+        IReadOnlyDictionary<string, List<string>> moduleOwnersByDll,
+        out RuntimeIssueSignature? signature
+    )
+    {
+        signature = null;
+        string normalized = NormalizeIssue(rawLine);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return false;
+        }
+
+        RuntimeIssueKind? kind = ClassifyRuntimeIssueKind(normalized);
+        if (kind is null)
+        {
+            return false;
+        }
+
+        List<string> moduleIds = InferModulesFromIssueText(
+            normalized,
+            modules,
+            customOnlyFocus,
+            byId,
+            moduleOwnersByDll);
+        bool hasConcreteAnchor = moduleIds.Count > 0
+            || ModulePathRegex.IsMatch(normalized)
+            || DllNameRegex.IsMatch(normalized)
+            || ContainsAny(normalized, SignatureAnchorTokens);
+        if (kind == RuntimeIssueKind.GenericRuntimeError && !hasConcreteAnchor)
+        {
+            return false;
+        }
+
+        signature = new RuntimeIssueSignature(
+            BuildRuntimeIssueKey(kind.Value, normalized),
+            kind.Value,
+            DetermineRuntimeIssueCriticality(kind.Value),
+            BuildRuntimeIssueSummary(kind.Value, normalized),
+            moduleIds,
+            normalized,
+            sourceLabel);
+        return true;
+    }
+
+    private static RuntimeIssueKind? ClassifyRuntimeIssueKind(string normalizedIssue)
+    {
+        string normalized = normalizedIssue.ToLowerInvariant();
+        if (normalized.Contains("missingmethodexception", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeIssueKind.MissingMethod;
+        }
+
+        if (normalized.Contains("typeloadexception", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeIssueKind.TypeLoad;
+        }
+
+        if (normalized.Contains("filenotfoundexception", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("could not load file or assembly", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("couldn't find .dll", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("assembly load result: null", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("couldn't verify dlls", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeIssueKind.LoaderFailure;
+        }
+
+        if (normalized.Contains("nullreferenceexception", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeIssueKind.NullReference;
+        }
+
+        if (normalized.Contains("assert", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeIssueKind.Assertion;
+        }
+
+        if (normalized.Contains("unhandled exception", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeIssueKind.UnhandledException;
+        }
+
+        bool broadErrorMarker = normalized.Contains("error:", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("error", StringComparison.OrdinalIgnoreCase);
+        return broadErrorMarker
+            ? RuntimeIssueKind.GenericRuntimeError
+            : null;
+    }
+
+    private static RuntimeIssueCriticality DetermineRuntimeIssueCriticality(RuntimeIssueKind kind)
+    {
+        return kind switch
+        {
+            RuntimeIssueKind.LoaderFailure or RuntimeIssueKind.MissingMethod or RuntimeIssueKind.TypeLoad or RuntimeIssueKind.UnhandledException
+                => RuntimeIssueCriticality.Critical,
+            RuntimeIssueKind.NullReference or RuntimeIssueKind.Assertion
+                => RuntimeIssueCriticality.High,
+            _ => RuntimeIssueCriticality.Advisory,
+        };
+    }
+
+    private static string BuildRuntimeIssueKey(RuntimeIssueKind kind, string issue)
+    {
+        Match moduleMatch = ModulePathRegex.Match(issue);
+        if (moduleMatch.Success)
+        {
+            string moduleId = moduleMatch.Groups["id"].Value.Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(moduleId))
+            {
+                return $"{ToToken(kind)}|module:{moduleId}";
             }
         }
 
-        if (inferred.Count == 0)
+        Match dllMatch = DllNameRegex.Match(issue);
+        if (dllMatch.Success)
         {
-            foreach (string id in runtimeModules)
+            string dll = dllMatch.Groups["dll"].Value.Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(dll))
             {
-                if (byId.TryGetValue(id, out ModuleManifest? module))
-                {
-                    inferred.Add(module.Id);
-                }
+                return $"{ToToken(kind)}|dll:{dll}";
+            }
+        }
+
+        string compact = issue.ToLowerInvariant()
+            .Replace("0x", "0x*", StringComparison.OrdinalIgnoreCase)
+            .Replace("  ", " ", StringComparison.Ordinal);
+        if (compact.Length > 96)
+        {
+            compact = compact[..96];
+        }
+
+        return $"{ToToken(kind)}|{compact}";
+    }
+
+    private static string BuildRuntimeIssueSummary(RuntimeIssueKind kind, string issue)
+    {
+        string? dll = DllNameRegex.Match(issue) is Match dllMatch && dllMatch.Success
+            ? dllMatch.Groups["dll"].Value.Trim()
+            : null;
+
+        return kind switch
+        {
+            RuntimeIssueKind.LoaderFailure => string.IsNullOrWhiteSpace(dll)
+                ? "Assembly or DLL failed to load"
+                : $"Assembly or DLL failed to load ({dll})",
+            RuntimeIssueKind.MissingMethod => "Missing method or game API mismatch",
+            RuntimeIssueKind.TypeLoad => "Type load failure",
+            RuntimeIssueKind.NullReference => "Null reference runtime exception",
+            RuntimeIssueKind.Assertion => "Engine or loader assertion",
+            RuntimeIssueKind.UnhandledException => "Unhandled runtime exception",
+            _ => "Runtime error marker",
+        };
+    }
+
+    private static string BuildRuntimeIssueOutcome(RuntimeIssueKind kind)
+    {
+        return kind switch
+        {
+            RuntimeIssueKind.LoaderFailure => "Startup can fail because required assemblies or DLLs are not loading cleanly.",
+            RuntimeIssueKind.MissingMethod or RuntimeIssueKind.TypeLoad => "Game API mismatches can break startup or fail when the affected code path executes.",
+            RuntimeIssueKind.NullReference or RuntimeIssueKind.UnhandledException => "The affected gameplay path can fail at runtime when this exception path is reached.",
+            RuntimeIssueKind.Assertion => "The engine or loader is already reporting an assertion failure on this runtime path.",
+            _ => "Runtime logs already show a concrete failure marker on this profile.",
+        };
+    }
+
+    private static string BuildRuntimeIssueRecommendation(RuntimeIssueKind kind)
+    {
+        return kind switch
+        {
+            RuntimeIssueKind.LoaderFailure => "Fix the assembly or DLL load problem first, then retest from a clean launch.",
+            RuntimeIssueKind.MissingMethod or RuntimeIssueKind.TypeLoad => "Match mod builds to the same Bannerlord API baseline, then retest from a clean launch.",
+            RuntimeIssueKind.NullReference or RuntimeIssueKind.UnhandledException => "Reproduce the same gameplay path once with the current stack, then isolate only if the failure returns.",
+            RuntimeIssueKind.Assertion => "Treat the assertion as a hard runtime blocker and resolve the underlying module mismatch before deeper validation.",
+            _ => "Use the logged error as a concrete baseline, then retest from a clean launch after each change.",
+        };
+    }
+
+    private static List<string> InferModulesFromIssueText(
+        string issue,
+        IReadOnlyList<ModuleManifest> modules,
+        bool customOnlyFocus,
+        IReadOnlyDictionary<string, ModuleManifest> byId,
+        IReadOnlyDictionary<string, List<string>> moduleOwnersByDll
+    )
+    {
+        HashSet<string> inferred = new(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in ModulePathRegex.Matches(issue))
+        {
+            string id = match.Groups["id"].Value.Trim();
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                continue;
+            }
+
+            if (byId.TryGetValue(id, out ModuleManifest? module))
+            {
+                inferred.Add(module.Id);
+            }
+            else
+            {
+                inferred.Add(id);
+            }
+        }
+
+        foreach ((string dllName, List<string> owners) in moduleOwnersByDll)
+        {
+            if (!issue.Contains(dllName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (string owner in owners)
+            {
+                inferred.Add(owner);
+            }
+        }
+
+        foreach (ModuleManifest module in modules)
+        {
+            if (ContainsToken(issue, module.Id) || ContainsToken(issue, module.Name))
+            {
+                inferred.Add(module.Id);
             }
         }
 
         return inferred
             .Where(id => !customOnlyFocus || (byId.TryGetValue(id, out ModuleManifest? mod) && mod.IsCustom))
-            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
             .Take(24)
             .ToList();
     }
@@ -927,6 +1185,90 @@ public sealed class RuntimeSessionLogAnalyzer
         {
             yield return session.RglLogPath;
         }
+    }
+
+    private static double ComputeRuntimeLoaderConfidence(IReadOnlyList<RuntimeIssueSignature> runtimeIssues)
+    {
+        double confidence = 0.70;
+        if (runtimeIssues.Any(issue => issue.Criticality == RuntimeIssueCriticality.Critical))
+        {
+            confidence += 0.12;
+        }
+
+        if (runtimeIssues.Count > 1)
+        {
+            confidence += Math.Min(0.08, runtimeIssues.Count * 0.02);
+        }
+
+        if (runtimeIssues.All(issue => issue.Kind == RuntimeIssueKind.GenericRuntimeError))
+        {
+            confidence -= 0.10;
+        }
+
+        if (runtimeIssues.Any(issue => issue.ModuleIds.Count > 0))
+        {
+            confidence += 0.04;
+        }
+
+        return Math.Clamp(confidence, 0.64, 0.96);
+    }
+
+    private static RuntimeIssueKind ClassifySignatureKind(string signature)
+    {
+        if (string.IsNullOrWhiteSpace(signature))
+        {
+            return RuntimeIssueKind.GenericRuntimeError;
+        }
+
+        string token = signature.Split('|', 2, StringSplitOptions.TrimEntries)[0];
+        return token switch
+        {
+            "loader-failure" => RuntimeIssueKind.LoaderFailure,
+            "missing-method" => RuntimeIssueKind.MissingMethod,
+            "type-load" => RuntimeIssueKind.TypeLoad,
+            "null-reference" => RuntimeIssueKind.NullReference,
+            "assertion" => RuntimeIssueKind.Assertion,
+            "unhandled-exception" => RuntimeIssueKind.UnhandledException,
+            _ => RuntimeIssueKind.GenericRuntimeError,
+        };
+    }
+
+    private static string ToDisplayLabel(RuntimeIssueKind kind)
+    {
+        return kind switch
+        {
+            RuntimeIssueKind.LoaderFailure => "assembly/DLL load",
+            RuntimeIssueKind.MissingMethod => "missing-method",
+            RuntimeIssueKind.TypeLoad => "type-load",
+            RuntimeIssueKind.NullReference => "null-reference",
+            RuntimeIssueKind.Assertion => "assertion",
+            RuntimeIssueKind.UnhandledException => "unhandled-exception",
+            _ => "runtime",
+        };
+    }
+
+    private static string ToToken(RuntimeIssueKind kind)
+    {
+        return kind switch
+        {
+            RuntimeIssueKind.LoaderFailure => "loader-failure",
+            RuntimeIssueKind.MissingMethod => "missing-method",
+            RuntimeIssueKind.TypeLoad => "type-load",
+            RuntimeIssueKind.NullReference => "null-reference",
+            RuntimeIssueKind.Assertion => "assertion",
+            RuntimeIssueKind.UnhandledException => "unhandled-exception",
+            _ => "generic-runtime-error",
+        };
+    }
+
+    private static string ToToken(RuntimeIssueCriticality criticality)
+    {
+        return criticality switch
+        {
+            RuntimeIssueCriticality.Critical => "critical",
+            RuntimeIssueCriticality.High => "high",
+            _ => "advisory",
+        };
     }
 
     private static List<string> ReadLinesSafe(string? path, int maxLines, List<string> warnings)
@@ -1038,6 +1380,98 @@ public sealed class RuntimeSessionLogAnalyzer
         string? CrashListPath,
         DateTime LastWriteUtc
     );
+
+    private enum RuntimeIssueKind
+    {
+        LoaderFailure,
+        MissingMethod,
+        TypeLoad,
+        NullReference,
+        Assertion,
+        UnhandledException,
+        GenericRuntimeError,
+    }
+
+    private enum RuntimeIssueCriticality
+    {
+        Advisory,
+        High,
+        Critical,
+    }
+
+    private sealed record RuntimeIssueSignature(
+        string Key,
+        RuntimeIssueKind Kind,
+        RuntimeIssueCriticality Criticality,
+        string Summary,
+        IReadOnlyList<string> ModuleIds,
+        string EvidenceLine,
+        string PrimarySource
+    );
+
+    private sealed class RuntimeIssueAccumulator
+    {
+        public RuntimeIssueAccumulator(
+            string key,
+            RuntimeIssueKind kind,
+            RuntimeIssueCriticality criticality,
+            string summary)
+        {
+            Key = key;
+            Kind = kind;
+            Criticality = criticality;
+            Summary = summary;
+        }
+
+        public string Key { get; }
+        public RuntimeIssueKind Kind { get; private set; }
+        public RuntimeIssueCriticality Criticality { get; private set; }
+        public string Summary { get; private set; }
+        public HashSet<string> ModuleIds { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> EvidenceLines { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> Sources { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public void Add(RuntimeIssueSignature signature)
+        {
+            if (signature.Criticality > Criticality)
+            {
+                Criticality = signature.Criticality;
+            }
+
+            if (signature.Kind != RuntimeIssueKind.GenericRuntimeError)
+            {
+                Kind = signature.Kind;
+                Summary = signature.Summary;
+            }
+
+            foreach (string moduleId in signature.ModuleIds)
+            {
+                ModuleIds.Add(moduleId);
+            }
+
+            if (!string.IsNullOrWhiteSpace(signature.EvidenceLine))
+            {
+                EvidenceLines.Add(signature.EvidenceLine);
+            }
+
+            if (!string.IsNullOrWhiteSpace(signature.PrimarySource))
+            {
+                Sources.Add(signature.PrimarySource);
+            }
+        }
+
+        public RuntimeIssueSignature Build()
+        {
+            return new RuntimeIssueSignature(
+                Key,
+                Kind,
+                Criticality,
+                Summary,
+                ModuleIds.OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList(),
+                EvidenceLines.FirstOrDefault() ?? Summary,
+                Sources.OrderBy(source => source, StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? "runtime-log");
+        }
+    }
 
     private sealed class SessionBucket
     {

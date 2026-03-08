@@ -94,11 +94,10 @@ public sealed class HarmonyPatchLogAnalyzer
             warnings
         ));
 
-        if (allPatchFiles.Count > 0 && !findings.Any(f => f.Category == ConflictCategory.HarmonyPatchConflict))
+        if (allPatchFiles.Count > 0 && findings.Count == 0)
         {
             warnings.Add(
-                "Harmony logs were found, but no explicit duplicate patch blocks were parsed. "
-                + "The scan still reports patch stacks when multiple modules target the same method."
+                "Harmony logs were found, but no multi-module Harmony targets were parsed from them."
             );
         }
 
@@ -135,9 +134,7 @@ public sealed class HarmonyPatchLogAnalyzer
 
                 string target = ExtractTargetSignature(block) ?? "Unknown target method";
                 List<string> patchTypes = ExtractPatchTypes(block);
-                bool hasTranspiler = patchTypes.Any(x => x.Equals("Transpiler", StringComparison.OrdinalIgnoreCase));
-                bool postfixOnly = IsPostfixOnlyPatchSet(patchTypes);
-                string key = $"conflict|{target}|{string.Join("|", moduleIds)}";
+                string key = $"duplicate|{target}|{string.Join("|", moduleIds)}";
                 if (!dedupeKeys.Add(key))
                 {
                     continue;
@@ -146,23 +143,31 @@ public sealed class HarmonyPatchLogAnalyzer
                 string patchSummary = patchTypes.Count > 0
                     ? string.Join(", ", patchTypes)
                     : "unknown patch kinds";
+                HarmonyOwnershipShape ownershipShape = HarmonyFindingProfiles.DetermineOwnershipShape(
+                    moduleIds.SelectMany(moduleId => patchTypes.Select(patchType => (moduleId, patchType))));
+                HarmonyRiskProfile profile = HarmonyFindingProfiles.Create(
+                    target,
+                    patchTypes,
+                    HarmonyOrderState.Unknown,
+                    ownershipShape,
+                    hasStaticMetadataEvidence: false,
+                    hasDuplicateScannerEvidence: true,
+                    hasOrderingGraphEvidence: false,
+                    hasRuntimeCorrelationEvidence: false,
+                    moduleCount: moduleIds.Count);
+                HarmonyRiskAssessment assessment = HarmonyFindingProfiles.Assess(profile);
 
                 findings.Add(new ConflictFinding
                 {
-                    Category = postfixOnly ? ConflictCategory.HarmonyPatchStack : ConflictCategory.HarmonyPatchConflict,
-                    Severity = hasTranspiler ? ConflictSeverity.Critical : postfixOnly ? ConflictSeverity.Medium : ConflictSeverity.High,
-                    Confidence = postfixOnly ? 0.78 : 0.96,
+                    Category = assessment.Category,
+                    Severity = assessment.Severity,
+                    Confidence = assessment.Confidence,
                     ModuleIds = moduleIds,
-                    Reason = postfixOnly
-                        ? $"Harmony Patch Scanner reported stacked postfix patches on '{target}' ({patchSummary})."
-                        : $"Harmony Patch Scanner reported duplicate patches on '{target}' ({patchSummary}).",
-                    LikelyInGameOutcome = postfixOnly
-                        ? "These are duplicate postfix patches. They usually stack, but final values or shared side effects can still depend on order."
-                        : "Method execution order can change behavior, suppress logic, or trigger hard runtime faults.",
-                    Recommendation = postfixOnly
-                        ? "Keep the current mod stack together and validate the affected gameplay path first. Only isolate one patch source if a real symptom appears on this method."
-                        : "Use compatibility patches and explicit Harmony before/after/priority rules, or disable one of the conflicting patches.",
-                    Evidence = BuildDuplicatePatchEvidence(file, target, patchSummary, postfixOnly),
+                    Reason = assessment.Reason,
+                    LikelyInGameOutcome = assessment.LikelyOutcome,
+                    Recommendation = assessment.Recommendation,
+                    Evidence = BuildDuplicatePatchEvidence(file, profile, patchSummary),
+                    StructuredEvidence = HarmonyFindingProfiles.BuildStructuredEvidence(profile),
                 });
             }
         }
@@ -276,75 +281,50 @@ public sealed class HarmonyPatchLogAnalyzer
                 continue;
             }
 
-            if (dedupeKeys.Contains($"conflict|{targetGroup.Key}|{string.Join("|", moduleIds)}"))
-            {
-                // DuplicateHarmonyPatches already raised a stronger direct conflict for this target.
-                continue;
-            }
-
-            string key = $"stack|{targetGroup.Key}|{string.Join("|", moduleIds)}";
+            string key = $"graph|{targetGroup.Key}|{string.Join("|", moduleIds)}";
             if (!dedupeKeys.Add(key))
             {
                 continue;
             }
 
-            string[] patchTypes = targetGroup.Select(r => r.PatchType)
+            List<string> patchTypes = targetGroup.Select(r => r.PatchType)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            bool hasTranspiler = patchTypes.Any(x => x.Equals("Transpiler", StringComparison.OrdinalIgnoreCase));
-            bool postfixOnly = IsPostfixOnlyPatchSet(patchTypes);
-            bool duplicateKindAcrossMods = targetGroup
-                .GroupBy(r => r.PatchType, StringComparer.OrdinalIgnoreCase)
-                .Any(g => g.Select(x => x.ModuleId).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1);
+                .ToList();
 
             HarmonyGraphMetrics metrics = graphByTarget.TryGetValue(targetGroup.Key, out HarmonyGraphAccumulator? graph)
                 ? graph.Build(targetGroup.Key, moduleIds)
                 : HarmonyGraphMetrics.Empty(targetGroup.Key, moduleIds);
-
-            bool highRiskGraph = metrics.HasOrderingCycle || metrics.AmbiguousSamePriorityPairs > 0 || metrics.UnorderedModulePairs > 0;
-            ConflictCategory category = postfixOnly
-                ? ConflictCategory.HarmonyPatchStack
-                : (hasTranspiler || duplicateKindAcrossMods || highRiskGraph)
-                ? ConflictCategory.HarmonyPatchConflict
-                : ConflictCategory.HarmonyPatchStack;
-            ConflictSeverity severity = ComputeGraphDrivenSeverity(hasTranspiler, duplicateKindAcrossMods, metrics, category, postfixOnly);
-            double confidence = ComputeGraphDrivenConfidence(metrics, category, postfixOnly);
-            string patchKindsText = string.Join(", ", patchTypes);
-            string graphSummary =
-                $"graph: modules={metrics.ModuleCount}, operations={metrics.OperationCount}, explicit-edges={metrics.ExplicitEdgeCount}, "
-                + $"unordered-pairs={metrics.UnorderedModulePairs}, ambiguous-same-priority={metrics.AmbiguousSamePriorityPairs}, "
-                + $"cycle={(metrics.HasOrderingCycle ? "yes" : "no")}, priorities={metrics.PrioritySummary}.";
-            string reason = postfixOnly
-                ? $"Method-level Harmony graph for '{targetGroup.Key}' shows postfix stacking ({patchKindsText}; {graphSummary})"
-                : category == ConflictCategory.HarmonyPatchConflict
-                ? $"Method-level Harmony graph for '{targetGroup.Key}' indicates unstable patch ordering ({patchKindsText}; {graphSummary})"
-                : $"Method-level Harmony graph for '{targetGroup.Key}' shows stacked but mostly ordered patches ({patchKindsText}; {graphSummary})";
-            string likelyOutcome = postfixOnly
-                ? "These are postfix patches. They usually stack, but order can still change final values or shared side effects."
-                : category == ConflictCategory.HarmonyPatchConflict
-                ? "Patch execution order can diverge by profile updates and trigger logic suppression, repeated handlers, or runtime faults."
-                : "Patch stack appears mostly ordered but still alters behavior through cumulative side effects.";
-            string recommendation = postfixOnly
-                ? "Keep the mods together first and validate the affected gameplay path. If you can reproduce a symptom, isolate one patch source and add explicit Harmony ordering only if needed."
-                : metrics.HasOrderingCycle
-                ? "Break circular Harmony ordering constraints (before/after) and set explicit unique priorities for the target method."
-                : (metrics.AmbiguousSamePriorityPairs > 0 || metrics.UnorderedModulePairs > 0)
-                    ? "Set explicit Harmony before/after and priority rules so each module pair has deterministic order on this method."
-                    : category == ConflictCategory.HarmonyPatchConflict
-                        ? "Keep a single primary patch owner for this method path or ship a dedicated compatibility patch."
-                        : "Keep explicit patch priorities documented and validate this method path after each mod update.";
+            HarmonyOrderState orderState = DetermineGraphOrderState(metrics);
+            HarmonyOwnershipShape ownershipShape = HarmonyFindingProfiles.DetermineOwnershipShape(
+                targetGroup.Select(record => (record.ModuleId, record.PatchType)));
+            HarmonyRiskProfile profile = HarmonyFindingProfiles.Create(
+                targetGroup.Key,
+                patchTypes,
+                orderState,
+                ownershipShape,
+                hasStaticMetadataEvidence: false,
+                hasDuplicateScannerEvidence: false,
+                hasOrderingGraphEvidence: true,
+                hasRuntimeCorrelationEvidence: false,
+                moduleCount: moduleIds.Length,
+                unorderedPairs: metrics.UnorderedModulePairs,
+                ambiguousPairs: metrics.AmbiguousSamePriorityPairs,
+                explicitEdgeCount: metrics.ExplicitEdgeCount,
+                hasOrderingCycle: metrics.HasOrderingCycle);
+            HarmonyRiskAssessment assessment = HarmonyFindingProfiles.Assess(profile);
 
             findings.Add(new ConflictFinding
             {
-                Category = category,
-                Severity = severity,
-                Confidence = confidence,
+                Category = assessment.Category,
+                Severity = assessment.Severity,
+                Confidence = assessment.Confidence,
                 ModuleIds = moduleIds,
-                Reason = reason,
-                LikelyInGameOutcome = likelyOutcome,
-                Recommendation = recommendation,
-                Evidence = BuildGraphEvidence(targetGroup, metrics, postfixOnly),
+                Reason = assessment.Reason,
+                LikelyInGameOutcome = assessment.LikelyOutcome,
+                Recommendation = assessment.Recommendation,
+                Evidence = BuildGraphEvidence(targetGroup, metrics, profile),
+                StructuredEvidence = HarmonyFindingProfiles.BuildStructuredEvidence(profile),
             });
         }
 
@@ -430,50 +410,65 @@ public sealed class HarmonyPatchLogAnalyzer
     private static IReadOnlyList<string> BuildGraphEvidence(
         IGrouping<string, HarmonyPatchRecord> targetGroup,
         HarmonyGraphMetrics metrics,
-        bool postfixOnly
+        HarmonyRiskProfile profile
     )
     {
         List<string> evidence = targetGroup.Select(r => r.SourcePath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(4)
             .ToList();
-        evidence.Add($"harmony-target:{metrics.TargetMethod}");
-        evidence.Add($"harmony-graph:modules={metrics.ModuleCount};ops={metrics.OperationCount};edges={metrics.ExplicitEdgeCount};unordered={metrics.UnorderedModulePairs};ambiguous={metrics.AmbiguousSamePriorityPairs};cycle={(metrics.HasOrderingCycle ? 1 : 0)}");
+        evidence.Add($"{HarmonyFindingProfiles.TargetPrefix}{metrics.TargetMethod}");
+        evidence.Add($"{HarmonyFindingProfiles.GraphPrefix}modules={metrics.ModuleCount};ops={metrics.OperationCount};edges={metrics.ExplicitEdgeCount};unordered={metrics.UnorderedModulePairs};ambiguous={metrics.AmbiguousSamePriorityPairs};cycle={(metrics.HasOrderingCycle ? 1 : 0)}");
         if (metrics.KindSummary.Length > 0)
         {
-            evidence.Add($"harmony-kinds:{metrics.KindSummary}");
-        }
-        if (postfixOnly)
-        {
-            evidence.Add("harmony-profile:postfix-only");
+            evidence.Add($"{HarmonyFindingProfiles.KindsPrefix}{string.Join(", ", profile.PatchKinds)}");
         }
         if (metrics.PrioritySummary.Length > 0)
         {
-            evidence.Add($"harmony-priority:{metrics.PrioritySummary}");
+            evidence.Add($"{HarmonyFindingProfiles.PriorityPrefix}{metrics.PrioritySummary}");
         }
+        evidence.AddRange(HarmonyFindingProfiles.BuildEvidenceTags(profile));
 
-        return evidence.Take(10).ToList();
+        return evidence.Take(16).ToList();
     }
 
     private static IReadOnlyList<string> BuildDuplicatePatchEvidence(
         string file,
-        string target,
-        string patchSummary,
-        bool postfixOnly
+        HarmonyRiskProfile profile,
+        string patchSummary
     )
     {
         List<string> evidence =
         [
             file,
-            $"harmony-target:{target}",
-            $"harmony-kinds:{patchSummary}",
+            $"{HarmonyFindingProfiles.TargetPrefix}{profile.TargetMethod}",
+            $"{HarmonyFindingProfiles.KindsPrefix}{patchSummary}",
         ];
-        if (postfixOnly)
-        {
-            evidence.Add("harmony-profile:postfix-only");
-        }
+        evidence.AddRange(HarmonyFindingProfiles.BuildEvidenceTags(profile));
 
         return evidence;
+    }
+
+    private static HarmonyOrderState DetermineGraphOrderState(HarmonyGraphMetrics metrics)
+    {
+        if (metrics.HasOrderingCycle)
+        {
+            return HarmonyOrderState.Cycle;
+        }
+
+        if (metrics.AmbiguousSamePriorityPairs > 0)
+        {
+            return HarmonyOrderState.SamePriorityAmbiguous;
+        }
+
+        if (metrics.UnorderedModulePairs > 0)
+        {
+            return HarmonyOrderState.Unordered;
+        }
+
+        return metrics.ExplicitEdgeCount > 0
+            ? HarmonyOrderState.ExplicitlyOrdered
+            : HarmonyOrderState.Unknown;
     }
 
     private static bool IsPostfixOnlyPatchSet(IEnumerable<string> patchKinds)
