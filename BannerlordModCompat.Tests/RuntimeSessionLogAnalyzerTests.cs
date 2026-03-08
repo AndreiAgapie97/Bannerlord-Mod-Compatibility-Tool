@@ -82,6 +82,9 @@ public class RuntimeSessionLogAnalyzerTests
             Assert.Contains(FindingEvidenceSource.RuntimeLog, loader.StructuredEvidence.Sources);
             Assert.Contains(FindingEvidenceKind.RuntimeLoaderIssue, loader.StructuredEvidence.Kinds);
             Assert.Equal("loader-failure", loader.StructuredEvidence.Details["issue-kind"]);
+            Assert.Equal("startup", loader.StructuredEvidence.Details["issue-phase"]);
+            Assert.Equal("startup", loader.StructuredEvidence.Details["system-area"]);
+            Assert.False(string.IsNullOrWhiteSpace(loader.StructuredEvidence.Details["session-fingerprint"]));
         }
         finally
         {
@@ -140,6 +143,8 @@ public class RuntimeSessionLogAnalyzerTests
             Assert.NotNull(recurring.StructuredEvidence);
             Assert.Equal("loader-failure", recurring.StructuredEvidence!.Details["issue-kind"]);
             Assert.Equal("2", recurring.StructuredEvidence.Details["recurrence-count"]);
+            Assert.Equal("startup", recurring.StructuredEvidence.Details["issue-phase"]);
+            Assert.Equal("startup", recurring.StructuredEvidence.Details["system-area"]);
         }
         finally
         {
@@ -258,6 +263,8 @@ public class RuntimeSessionLogAnalyzerTests
             Assert.NotNull(loader.StructuredEvidence);
             Assert.Equal("missing-method", loader.StructuredEvidence!.Details["issue-kind"]);
             Assert.Contains("API mismatch", loader.StructuredEvidence.Details["issue-summary"], StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("campaign-load", loader.StructuredEvidence.Details["issue-phase"]);
+            Assert.Equal("campaign", loader.StructuredEvidence.Details["system-area"]);
         }
         finally
         {
@@ -292,6 +299,42 @@ public class RuntimeSessionLogAnalyzerTests
             ).ToList();
 
             Assert.Empty(findings);
+        }
+        finally
+        {
+            DeleteTempRoot(tempRoot);
+        }
+    }
+
+    [Fact]
+    public void Analyze_ClassifiesMissionExceptionAsBattleEntryIssue()
+    {
+        string tempRoot = CreateTempRoot();
+        try
+        {
+            string rglErrorsPath = Path.Combine(tempRoot, "rgl_log_errors_999003.txt");
+            File.WriteAllLines(rglErrorsPath,
+            [
+                "System.NullReferenceException: Object reference not set to an instance of an object at TaleWorlds.MountAndBlade.MissionState.OpenNewMission()",
+            ]);
+
+            RuntimeSessionLogAnalyzer analyzer = new();
+            List<string> warnings = [];
+            List<ConflictFinding> findings = analyzer.Analyze(
+                modules:
+                [
+                    BuildModule("BattleMod"),
+                ],
+                currentOrder: ["BattleMod"],
+                customOnlyFocus: false,
+                warnings: warnings,
+                logsRootOverride: tempRoot
+            ).ToList();
+
+            ConflictFinding runtime = Assert.Single(findings, f => f.Category == ConflictCategory.RuntimeLoaderFailure);
+            Assert.NotNull(runtime.StructuredEvidence);
+            Assert.Equal("battle-entry", runtime.StructuredEvidence!.Details["issue-phase"]);
+            Assert.Equal("battle", runtime.StructuredEvidence.Details["system-area"]);
         }
         finally
         {

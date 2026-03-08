@@ -95,6 +95,8 @@ public sealed class CompatibilityAnalyzer
     private readonly HarmonyPatchLogAnalyzer _harmonyPatchAnalyzer = new();
     private readonly HarmonyPatchStaticAnalyzer _harmonyPatchStaticAnalyzer = new();
     private readonly CodeConflictAnalyzer _codeConflictAnalyzer = new();
+    private readonly ModuleCapabilityProfiler _moduleCapabilityProfiler = new();
+    private readonly UiOverrideAnalyzer _uiOverrideAnalyzer = new();
     private readonly RuntimeSessionLogAnalyzer _runtimeSessionLogAnalyzer = new();
     private readonly RuntimeEvidenceCorrelator _runtimeEvidenceCorrelator = new();
 
@@ -113,7 +115,8 @@ public sealed class CompatibilityAnalyzer
             context.Modules,
             context.CurrentOrder,
             options.PinnedMods,
-            filteredConflicts
+            filteredConflicts,
+            context.CapabilityProfiles
         );
         context.Warnings.AddRange(fullRecommendation.Warnings);
 
@@ -174,7 +177,19 @@ public sealed class CompatibilityAnalyzer
             warnings.Add("Custom-mod focus enabled: official game modules and common framework modules are hidden in findings.");
         }
 
-        return new ScanPipelineContext(discovered, warnings, modules, currentOrder, scopedModules, scopedOrder);
+        IReadOnlyList<ModuleCapabilityProfile> capabilityProfiles = _moduleCapabilityProfiler.BuildProfiles(
+            modules,
+            options.CustomModsOnlyFocus,
+            warnings);
+
+        return new ScanPipelineContext(
+            discovered,
+            warnings,
+            modules,
+            currentOrder,
+            scopedModules,
+            scopedOrder,
+            capabilityProfiles);
     }
 
     private List<ConflictFinding> CollectFindings(
@@ -202,14 +217,21 @@ public sealed class CompatibilityAnalyzer
             context.Warnings));
 
         ReportProgress(progress, 54, "Analyzing code-level behavior/model overlap...");
-        conflicts.AddRange(_codeConflictAnalyzer.Analyze(context.Modules, options.CustomModsOnlyFocus, context.Warnings));
+        conflicts.AddRange(_codeConflictAnalyzer.Analyze(context.CapabilityProfiles));
+
+        ReportProgress(progress, 58, "Checking Bannerlord-specific UI precedence rules...");
+        conflicts.AddRange(_uiOverrideAnalyzer.Analyze(
+            context.CurrentOrder,
+            context.CapabilityProfiles));
 
         ReportProgress(progress, 62, "Analyzing runtime session logs (launcher/watchdog/rgl)...");
         conflicts.AddRange(_runtimeSessionLogAnalyzer.Analyze(
             context.Modules,
             context.CurrentOrder,
             options.CustomModsOnlyFocus,
-            context.Warnings));
+            context.Warnings,
+            logsRootOverride: null,
+            gameVersion: options.GameVersion));
 
         if (options.IncludeDataNoiseFindings)
         {
@@ -1429,6 +1451,7 @@ public sealed class CompatibilityAnalyzer
         IReadOnlyList<ModuleManifest> Modules,
         IReadOnlyList<string> CurrentOrder,
         IReadOnlyList<ModuleManifest> ScopedModules,
-        IReadOnlyList<string> ScopedOrder
+        IReadOnlyList<string> ScopedOrder,
+        IReadOnlyList<ModuleCapabilityProfile> CapabilityProfiles
     );
 }

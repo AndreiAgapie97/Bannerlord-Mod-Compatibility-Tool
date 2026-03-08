@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace BannerlordModCompat.Core;
@@ -82,7 +84,8 @@ public sealed class RuntimeSessionLogAnalyzer
         IReadOnlyList<string> currentOrder,
         bool customOnlyFocus,
         List<string> warnings,
-        string? logsRootOverride = null
+        string? logsRootOverride = null,
+        string? gameVersion = null
     )
     {
         string? logsRoot = ResolveLogsRoot(logsRootOverride);
@@ -128,7 +131,8 @@ public sealed class RuntimeSessionLogAnalyzer
             runtimeModules,
             customOnlyFocus,
             byId,
-            session
+            session,
+            gameVersion
         );
         if (loaderFinding is not null)
         {
@@ -141,7 +145,8 @@ public sealed class RuntimeSessionLogAnalyzer
             currentOrder,
             customOnlyFocus,
             byId,
-            warnings
+            warnings,
+            gameVersion
         );
         if (recurringCluster is not null)
         {
@@ -532,7 +537,8 @@ public sealed class RuntimeSessionLogAnalyzer
         IReadOnlySet<string> runtimeModules,
         bool customOnlyFocus,
         IReadOnlyDictionary<string, ModuleManifest> byId,
-        SessionFiles session
+        SessionFiles session,
+        string? gameVersion
     )
     {
         if (runtimeIssues.Count == 0)
@@ -580,6 +586,8 @@ public sealed class RuntimeSessionLogAnalyzer
             : $"Latest runtime logs show {runtimeIssues.Count} concrete loader/runtime issue signature(s). Strongest signal: {strongest.Summary}.";
         string likelyOutcome = BuildRuntimeIssueOutcome(strongest.Kind);
         string recommendation = BuildRuntimeIssueRecommendation(strongest.Kind);
+        string phaseToken = ToToken(strongest.Phase);
+        string fingerprint = BuildModlistSessionFingerprint(moduleIds, gameVersion);
         List<string> evidence = PathEvidence(session).ToList();
         evidence.AddRange(runtimeIssues
             .Take(6)
@@ -607,6 +615,9 @@ public sealed class RuntimeSessionLogAnalyzer
                     ["criticality"] = ToToken(strongest.Criticality),
                     ["issue-count"] = runtimeIssues.Count.ToString(CultureInfo.InvariantCulture),
                     ["primary-source"] = strongest.PrimarySource,
+                    ["issue-phase"] = phaseToken,
+                    ["system-area"] = strongest.SystemArea,
+                    ["session-fingerprint"] = fingerprint,
                 }),
         };
     }
@@ -617,7 +628,8 @@ public sealed class RuntimeSessionLogAnalyzer
         IReadOnlyList<string> currentOrder,
         bool customOnlyFocus,
         IReadOnlyDictionary<string, ModuleManifest> byId,
-        List<string> warnings
+        List<string> warnings,
+        string? gameVersion
     )
     {
         if (sessions.Count < 2)
@@ -703,6 +715,13 @@ public sealed class RuntimeSessionLogAnalyzer
                 foreach (RuntimeIssueSignature issue in runtimeIssues.Take(5))
                 {
                     cluster.SampleIssues.Add(issue.Summary);
+                    string issuePhaseToken = ToToken(issue.Phase);
+                    cluster.PhaseCounts[issuePhaseToken] = cluster.PhaseCounts.TryGetValue(issuePhaseToken, out int phaseCount)
+                        ? phaseCount + 1
+                        : 1;
+                    cluster.SystemAreaCounts[issue.SystemArea] = cluster.SystemAreaCounts.TryGetValue(issue.SystemArea, out int areaCount)
+                        ? areaCount + 1
+                        : 1;
                 }
             }
         }
@@ -747,6 +766,16 @@ public sealed class RuntimeSessionLogAnalyzer
 
         RuntimeIssueKind clusterKind = ClassifySignatureKind(best.Signature);
         string displaySignature = ToShortSignature(best.Signature);
+        string phaseToken = best.PhaseCounts
+            .OrderByDescending(x => x.Value)
+            .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.Key)
+            .FirstOrDefault() ?? "unknown";
+        string systemArea = best.SystemAreaCounts
+            .OrderByDescending(x => x.Value)
+            .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.Key)
+            .FirstOrDefault() ?? "runtime";
         string reason = $"Recurring {ToDisplayLabel(clusterKind)} signature detected: '{displaySignature}' appeared in "
             + $"{best.SessionKeys.Count}/{sessions.Count} recent session(s).";
         string likelyOutcome = $"{BuildRuntimeIssueOutcome(clusterKind)} This signature is repeating across runs, which makes the signal much stronger than a one-off log line.";
@@ -784,6 +813,9 @@ public sealed class RuntimeSessionLogAnalyzer
                     ["criticality"] = best.HasCriticalRuntimeSignatures ? "critical" : "high",
                     ["issue-count"] = best.SampleIssues.Count.ToString(CultureInfo.InvariantCulture),
                     ["recurrence-count"] = best.SessionKeys.Count.ToString(CultureInfo.InvariantCulture),
+                    ["issue-phase"] = phaseToken,
+                    ["system-area"] = systemArea,
+                    ["session-fingerprint"] = BuildModlistSessionFingerprint(modulesFromCluster, gameVersion),
                 }),
         };
     }
@@ -964,6 +996,7 @@ public sealed class RuntimeSessionLogAnalyzer
             return false;
         }
 
+        RuntimeIssuePhase phase = ClassifyRuntimeIssuePhase(kind.Value, normalized, sourceLabel);
         signature = new RuntimeIssueSignature(
             BuildRuntimeIssueKey(kind.Value, normalized),
             kind.Value,
@@ -971,7 +1004,9 @@ public sealed class RuntimeSessionLogAnalyzer
             BuildRuntimeIssueSummary(kind.Value, normalized),
             moduleIds,
             normalized,
-            sourceLabel);
+            sourceLabel,
+            phase,
+            ClassifyRuntimeSystemArea(normalized, phase));
         return true;
     }
 
@@ -1271,6 +1306,104 @@ public sealed class RuntimeSessionLogAnalyzer
         };
     }
 
+    private static string ToToken(RuntimeIssuePhase phase)
+    {
+        return phase switch
+        {
+            RuntimeIssuePhase.Startup => "startup",
+            RuntimeIssuePhase.CampaignLoad => "campaign-load",
+            RuntimeIssuePhase.BattleEntry => "battle-entry",
+            RuntimeIssuePhase.SettlementEntry => "settlement-entry",
+            RuntimeIssuePhase.SaveLoad => "save-load",
+            _ => "unknown",
+        };
+    }
+
+    private static RuntimeIssuePhase ClassifyRuntimeIssuePhase(
+        RuntimeIssueKind kind,
+        string normalizedIssue,
+        string sourceLabel)
+    {
+        string normalized = normalizedIssue.ToLowerInvariant();
+
+        if (normalized.Contains("save", StringComparison.OrdinalIgnoreCase)
+            && (normalized.Contains("load", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains(".sav", StringComparison.OrdinalIgnoreCase)))
+        {
+            return RuntimeIssuePhase.SaveLoad;
+        }
+
+        if (normalized.Contains("battle", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("mission", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("agent", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("siege", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeIssuePhase.BattleEntry;
+        }
+
+        if (normalized.Contains("settlement", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("town", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("village", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("castle", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeIssuePhase.SettlementEntry;
+        }
+
+        if (normalized.Contains("campaign", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("dailytick", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("behavior", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("gamestart", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeIssuePhase.CampaignLoad;
+        }
+
+        if (kind == RuntimeIssueKind.LoaderFailure
+            || kind == RuntimeIssueKind.TypeLoad
+            || kind == RuntimeIssueKind.MissingMethod
+            || sourceLabel.Equals("launcher", StringComparison.OrdinalIgnoreCase))
+        {
+            return RuntimeIssuePhase.Startup;
+        }
+
+        return RuntimeIssuePhase.Unknown;
+    }
+
+    private static string ClassifyRuntimeSystemArea(string normalizedIssue, RuntimeIssuePhase phase)
+    {
+        string normalized = normalizedIssue.ToLowerInvariant();
+
+        if (normalized.Contains("gauntlet", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("ui", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("widget", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("movie", StringComparison.OrdinalIgnoreCase))
+        {
+            return "ui";
+        }
+
+        if (normalized.Contains("harmony", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("patch", StringComparison.OrdinalIgnoreCase))
+        {
+            return "patching";
+        }
+
+        return phase switch
+        {
+            RuntimeIssuePhase.Startup => "startup",
+            RuntimeIssuePhase.CampaignLoad => "campaign",
+            RuntimeIssuePhase.BattleEntry => "battle",
+            RuntimeIssuePhase.SettlementEntry => "settlement",
+            RuntimeIssuePhase.SaveLoad => "save",
+            _ => "runtime",
+        };
+    }
+
+    private static string BuildModlistSessionFingerprint(IReadOnlyList<string> moduleIds, string? gameVersion)
+    {
+        string payload = $"{gameVersion ?? "unknown"}|{string.Join("|", moduleIds.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))}";
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+        return Convert.ToHexString(hash[..8]).ToLowerInvariant();
+    }
+
     private static List<string> ReadLinesSafe(string? path, int maxLines, List<string> warnings)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
@@ -1399,6 +1532,16 @@ public sealed class RuntimeSessionLogAnalyzer
         Critical,
     }
 
+    private enum RuntimeIssuePhase
+    {
+        Unknown,
+        Startup,
+        CampaignLoad,
+        BattleEntry,
+        SettlementEntry,
+        SaveLoad,
+    }
+
     private sealed record RuntimeIssueSignature(
         string Key,
         RuntimeIssueKind Kind,
@@ -1406,7 +1549,9 @@ public sealed class RuntimeSessionLogAnalyzer
         string Summary,
         IReadOnlyList<string> ModuleIds,
         string EvidenceLine,
-        string PrimarySource
+        string PrimarySource,
+        RuntimeIssuePhase Phase,
+        string SystemArea
     );
 
     private sealed class RuntimeIssueAccumulator
@@ -1430,6 +1575,8 @@ public sealed class RuntimeSessionLogAnalyzer
         public HashSet<string> ModuleIds { get; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> EvidenceLines { get; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> Sources { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<RuntimeIssuePhase, int> PhaseCounts { get; } = [];
+        public Dictionary<string, int> SystemAreaCounts { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public void Add(RuntimeIssueSignature signature)
         {
@@ -1458,10 +1605,32 @@ public sealed class RuntimeSessionLogAnalyzer
             {
                 Sources.Add(signature.PrimarySource);
             }
+
+            PhaseCounts[signature.Phase] = PhaseCounts.TryGetValue(signature.Phase, out int phaseCount)
+                ? phaseCount + 1
+                : 1;
+
+            if (!string.IsNullOrWhiteSpace(signature.SystemArea))
+            {
+                SystemAreaCounts[signature.SystemArea] = SystemAreaCounts.TryGetValue(signature.SystemArea, out int areaCount)
+                    ? areaCount + 1
+                    : 1;
+            }
         }
 
         public RuntimeIssueSignature Build()
         {
+            RuntimeIssuePhase phase = PhaseCounts
+                .OrderByDescending(x => x.Value)
+                .ThenBy(x => x.Key)
+                .Select(x => x.Key)
+                .FirstOrDefault();
+            string systemArea = SystemAreaCounts
+                .OrderByDescending(x => x.Value)
+                .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.Key)
+                .FirstOrDefault() ?? "runtime";
+
             return new RuntimeIssueSignature(
                 Key,
                 Kind,
@@ -1469,7 +1638,9 @@ public sealed class RuntimeSessionLogAnalyzer
                 Summary,
                 ModuleIds.OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList(),
                 EvidenceLines.FirstOrDefault() ?? Summary,
-                Sources.OrderBy(source => source, StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? "runtime-log");
+                Sources.OrderBy(source => source, StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? "runtime-log",
+                phase,
+                systemArea);
         }
     }
 
@@ -1549,6 +1720,8 @@ public sealed class RuntimeSessionLogAnalyzer
         public Dictionary<string, int> ModuleCounts { get; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> EvidencePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> SampleIssues { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int> PhaseCounts { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int> SystemAreaCounts { get; } = new(StringComparer.OrdinalIgnoreCase);
         public bool HasCriticalRuntimeSignatures { get; set; }
     }
 }

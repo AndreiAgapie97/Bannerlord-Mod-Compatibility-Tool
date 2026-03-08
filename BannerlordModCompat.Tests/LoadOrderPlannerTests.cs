@@ -58,6 +58,36 @@ public class LoadOrderPlannerTests
         Assert.Contains(LoadOrderRationaleKind.Pin, customB.Kinds);
     }
 
+    [Fact]
+    public void Build_ClassifiesOfficialUiPrecedenceRationale()
+    {
+        LoadOrderPlanner planner = new();
+        List<ModuleManifest> modules =
+        [
+            BuildModule("SandBox", official: true),
+            BuildModule("CustomUi"),
+        ];
+        ModuleCapabilityProfile customUiProfile = new("CustomUi", isOfficial: false, isFramework: false)
+        {
+            HasGauntletUiXml = true,
+            HasCodelessGauntletUi = true,
+        };
+        customUiProfile.OfficialDependencyTargets.Add("SandBox");
+
+        LoadOrderRecommendation recommendation = planner.Build(
+            modules,
+            currentOrder: ["SandBox", "CustomUi"],
+            pinnedMods: [],
+            findings: null,
+            capabilityProfiles: [customUiProfile]);
+
+        Assert.Equal(["CustomUi", "SandBox"], recommendation.SuggestedOrder);
+        LoadOrderModuleRationale uiRationale = Assert.Single(recommendation.ModuleRationales, r => r.ModuleId == "CustomUi");
+        Assert.Equal(LoadOrderRationaleKind.OfficialUiPrecedence, uiRationale.PrimaryKind);
+        Assert.Contains(LoadOrderRationaleKind.OfficialUiPrecedence, uiRationale.Kinds);
+        Assert.Contains("UI precedence", uiRationale.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static ModuleManifest BuildModule(
         string id,
         IReadOnlyList<ModuleDependency>? dependencies = null,

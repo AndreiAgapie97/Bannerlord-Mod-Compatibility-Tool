@@ -33,6 +33,7 @@ public sealed class HarmonyPatchStaticAnalyzer
     };
 
     private static readonly MetadataTypeNameProvider TypeProvider = new();
+    private readonly LocalScanCache _cache = new("harmony-static");
 
     public IReadOnlyList<ConflictFinding> Analyze(
         IReadOnlyList<ModuleManifest> modules,
@@ -58,7 +59,32 @@ public sealed class HarmonyPatchStaticAnalyzer
 
                 try
                 {
-                    records.AddRange(ParseAssembly(module, dll.Path, ref unresolvedTargets, unresolvedByModule));
+                    string fingerprint = LocalScanCache.ComputeFingerprint([dll.Path]);
+                    StaticPatchCacheEntry? cached;
+                    if (_cache.TryRead(dll.Path, fingerprint, out cached) && cached is not null)
+                    {
+                        records.AddRange(cached.Records);
+                        unresolvedTargets += cached.UnresolvedTargetCount;
+                        if (cached.UnresolvedTargetCount > 0)
+                        {
+                            unresolvedByModule[module.Id] = unresolvedByModule.TryGetValue(module.Id, out int existing)
+                                ? existing + cached.UnresolvedTargetCount
+                                : cached.UnresolvedTargetCount;
+                        }
+                    }
+                    else
+                    {
+                        int unresolvedBefore = unresolvedByModule.TryGetValue(module.Id, out int existingCount)
+                            ? existingCount
+                            : 0;
+                        List<StaticPatchRecord> parsedRecords = ParseAssembly(module, dll.Path, ref unresolvedTargets, unresolvedByModule).ToList();
+                        records.AddRange(parsedRecords);
+                        int unresolvedAfter = unresolvedByModule.TryGetValue(module.Id, out int count)
+                            ? count
+                            : 0;
+                        int unresolvedForDll = Math.Max(0, unresolvedAfter - unresolvedBefore);
+                        _cache.Write(dll.Path, fingerprint, new StaticPatchCacheEntry(parsedRecords, unresolvedForDll));
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -83,6 +109,11 @@ public sealed class HarmonyPatchStaticAnalyzer
             .Take(220)
             .ToList();
     }
+
+    private sealed record StaticPatchCacheEntry(
+        IReadOnlyList<StaticPatchRecord> Records,
+        int UnresolvedTargetCount
+    );
 
     private static bool ShouldScanAssembly(DllArtifact dll)
     {

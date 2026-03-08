@@ -61,28 +61,13 @@ public sealed class CodeConflictAnalyzer
         List<string> warnings
     )
     {
-        IReadOnlyList<ModuleManifest> scanScope = customOnlyFocus
-            ? modules.Where(m => m.IsCustom).ToList()
-            : modules.Where(m => !m.IsOfficial).ToList();
+        ModuleCapabilityProfiler profiler = new();
+        return Analyze(profiler.BuildProfiles(modules, customOnlyFocus, warnings));
+    }
 
-        if (scanScope.Count == 0)
-        {
-            return [];
-        }
-
-        TypeHierarchyIndex hierarchy = BuildHierarchy(modules, warnings);
-        List<ModuleCodeProfile> profiles = [];
-        foreach (ModuleManifest module in scanScope)
-        {
-            ModuleCodeProfile profile = BuildModuleProfile(module, hierarchy, warnings);
-            if (!profile.HasSignals)
-            {
-                continue;
-            }
-
-            profiles.Add(profile);
-        }
-
+    internal IReadOnlyList<ConflictFinding> Analyze(IReadOnlyList<ModuleCapabilityProfile> capabilityProfiles)
+    {
+        List<ModuleCodeProfile> profiles = NormalizeProfiles(capabilityProfiles);
         if (profiles.Count <= 1)
         {
             return [];
@@ -94,6 +79,74 @@ public sealed class CodeConflictAnalyzer
         findings.AddRange(AnalyzeMissionBehaviorOverlaps(profiles));
         findings.AddRange(AnalyzeLifecycleRegistrationOverlaps(profiles));
         return findings;
+    }
+
+    private static List<ModuleCodeProfile> NormalizeProfiles(IReadOnlyList<ModuleCapabilityProfile> capabilityProfiles)
+    {
+        List<ModuleCodeProfile> profiles = [];
+        foreach (ModuleCapabilityProfile source in capabilityProfiles)
+        {
+            ModuleCodeProfile target = new(source.ModuleId)
+            {
+                CallsAddBehavior = source.CallsAddBehavior,
+                CallsAddModel = source.CallsAddModel,
+                CallsAddMissionBehavior = source.CallsAddMissionBehavior,
+            };
+            foreach (string typeName in source.CampaignBehaviorTypes)
+            {
+                target.CampaignBehaviorTypes.Add(typeName);
+            }
+
+            foreach (string typeName in source.GameModelTypes)
+            {
+                target.GameModelTypes.Add(typeName);
+            }
+
+            foreach (string typeName in source.MissionBehaviorTypes)
+            {
+                target.MissionBehaviorTypes.Add(typeName);
+            }
+
+            foreach (string eventName in source.CampaignEventHooks)
+            {
+                target.CampaignEventHooks.Add(eventName);
+            }
+
+            foreach ((string family, HashSet<string> typeNames) in source.ModelFamilies)
+            {
+                foreach (string typeName in typeNames)
+                {
+                    target.AddModelFamily(family, typeName);
+                }
+            }
+
+            foreach ((string family, HashSet<string> typeNames) in source.MissionFamilies)
+            {
+                foreach (string typeName in typeNames)
+                {
+                    target.AddMissionFamily(family, typeName);
+                }
+            }
+
+            target.LifecycleRegistrations.AddRange(source.LifecycleRegistrations.Select(record =>
+                new LifecycleRegistrationRecord(
+                    record.Phase,
+                    record.HookMethod,
+                    record.ActionKind switch
+                    {
+                        BannerlordModCompat.Core.RegistrationActionKind.AddBehavior => RegistrationActionKind.AddBehavior,
+                        BannerlordModCompat.Core.RegistrationActionKind.AddModel => RegistrationActionKind.AddModel,
+                        BannerlordModCompat.Core.RegistrationActionKind.AddMissionBehavior => RegistrationActionKind.AddMissionBehavior,
+                        _ => RegistrationActionKind.AddBehavior,
+                    },
+                    record.EvidencePath)));
+            if (target.HasSignals)
+            {
+                profiles.Add(target);
+            }
+        }
+
+        return profiles;
     }
 
     private static TypeHierarchyIndex BuildHierarchy(

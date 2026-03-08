@@ -8,6 +8,7 @@ namespace BannerlordModCompat.Core;
 public sealed class ModuleScanner
 {
     private static readonly string[] IdAttributeCandidates = ["id", "Id", "ID", "stringId", "StringId"];
+    private readonly LocalScanCache _cache = new("module-scan");
 
     public IReadOnlyList<ModuleManifest> Scan(
         IReadOnlyList<string> moduleRoots,
@@ -47,7 +48,15 @@ public sealed class ModuleScanner
 
             try
             {
-                ModuleManifest manifest = ParseModuleManifest(moduleRoot, subModulePath, isWorkshop, warnings);
+                string fingerprint = BuildModuleFingerprint(moduleRoot, subModulePath, warnings);
+                string cacheScope = Path.GetFullPath(moduleRoot);
+                ModuleManifest? manifest;
+                if (!_cache.TryRead(cacheScope, fingerprint, out manifest) || manifest is null)
+                {
+                    manifest = ParseModuleManifest(moduleRoot, subModulePath, isWorkshop, warnings);
+                    _cache.Write(cacheScope, fingerprint, manifest);
+                }
+
                 modules.Add(manifest);
             }
             catch (Exception ex)
@@ -64,6 +73,32 @@ public sealed class ModuleScanner
                 .First())
             .OrderBy(m => m.Id, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static string BuildModuleFingerprint(string moduleRoot, string subModulePath, List<string> warnings)
+    {
+        List<string> relevantFiles = [subModulePath];
+        string moduleDataPath = Path.Combine(moduleRoot, "ModuleData");
+        string binPath = Path.Combine(moduleRoot, "bin");
+        string guiPath = Path.Combine(moduleRoot, "GUI");
+
+        if (Directory.Exists(moduleDataPath))
+        {
+            relevantFiles.AddRange(TryEnumerateFiles(moduleDataPath, "*.xml", warnings));
+            relevantFiles.AddRange(TryEnumerateFiles(moduleDataPath, "*.xslt", warnings));
+        }
+
+        if (Directory.Exists(binPath))
+        {
+            relevantFiles.AddRange(TryEnumerateFiles(binPath, "*.dll", warnings));
+        }
+
+        if (Directory.Exists(guiPath))
+        {
+            relevantFiles.AddRange(TryEnumerateFiles(guiPath, "*.xml", warnings));
+        }
+
+        return LocalScanCache.ComputeFingerprint(relevantFiles);
     }
 
     private static ModuleManifest ParseModuleManifest(

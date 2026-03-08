@@ -57,6 +57,7 @@ public enum FindingEvidenceSource
     HarmonyGraph,
     RuntimeCluster,
     DuplicateScanner,
+    RulePack,
 }
 
 public enum FindingEvidenceKind
@@ -72,6 +73,11 @@ public enum FindingEvidenceKind
     StabilityPreference,
     Pin,
     RuntimeModuleDrift,
+    KnownRule,
+    UiPrecedence,
+    CampaignRegistration,
+    MissionRegistration,
+    XmlOwnership,
 }
 
 public enum FindingEvidenceScope
@@ -88,6 +94,7 @@ public enum LoadOrderRationaleKind
     Unknown,
     Dependency,
     Bootstrap,
+    OfficialUiPrecedence,
     StabilityPreference,
     Pin,
     DisabledInstalled,

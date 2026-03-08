@@ -163,7 +163,9 @@ public partial class MainWindow
             ? "This save was created with mods now missing"
             : "These saves were created with mods now missing",
         ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack => BuildHarmonyPlayerHeadline(finding),
-        ConflictCategory.LoadOrderViolation => "Current load order breaks a dependency rule",
+        ConflictCategory.LoadOrderViolation => IsKnownUiRuleFinding(finding)
+            ? "Known Bannerlord UI order rule is reversed"
+            : "Current load order breaks a dependency rule",
         ConflictCategory.GameModelOverlap => "Several mods change the same gameplay calculation",
         ConflictCategory.BehaviorEventOverlap => "Several mods react to the same campaign events",
         ConflictCategory.MissionBehaviorOverlap => "Several mods change mission or battle startup logic",
@@ -179,7 +181,9 @@ public partial class MainWindow
             "The same runtime failure signature keeps repeating across sessions. This is a real stability pattern, not a one-off guess.",
         ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack =>
             BuildHarmonyImpactSummary(finding),
-        ConflictCategory.LoadOrderViolation => "The current module order breaks a declared dependency or precedence rule.",
+        ConflictCategory.LoadOrderViolation => IsKnownUiRuleFinding(finding)
+            ? "A known Bannerlord UI precedence rule is reversed. The official module can override or ignore the modded screen until the order is fixed."
+            : "The current module order breaks a declared dependency or precedence rule.",
         ConflictCategory.MissingDependency => "A required mod is missing.",
         ConflictCategory.ExplicitIncompatibility => "Mod author marked this pair as incompatible.",
         ConflictCategory.DependencyVersionMismatch => "Installed dependency version differs from expected.",
@@ -239,7 +243,9 @@ public partial class MainWindow
             or ConflictCategory.LoadOrderViolation
             or ConflictCategory.AssemblyReferenceMismatch)
         {
-            return "Direct Mod Scan";
+            return IsKnownUiRuleFinding(finding)
+                ? "Known Bannerlord rule"
+                : "Direct Mod Scan";
         }
 
         if (finding.Category is ConflictCategory.GameModelOverlap
@@ -257,11 +263,13 @@ public partial class MainWindow
     {
         ConflictCategory.MissingDependency => "Can Block Startup",
         ConflictCategory.ExplicitIncompatibility => "Can Break Startup Or Saves",
-        ConflictCategory.LoadOrderViolation => "Can Change Startup Order",
+        ConflictCategory.LoadOrderViolation => IsKnownUiRuleFinding(finding)
+            ? "Known Rule"
+            : "Can Change Startup Order",
         ConflictCategory.HarmonyPatchConflict or ConflictCategory.HarmonyPatchStack =>
             BuildHarmonyImpactRiskLabel(finding),
         ConflictCategory.AssemblyReferenceMismatch => "Can Crash On Load",
-        ConflictCategory.SaveFileRisk => GetSaveRiskEntries(finding).Count == 1 ? "Can Break This Save" : "Can Break These Saves",
+        ConflictCategory.SaveFileRisk => "Save Compatibility",
         ConflictCategory.GameModelOverlap => "Can Change Calculations",
         ConflictCategory.BehaviorEventOverlap => "Can Change Campaign Behavior",
         ConflictCategory.MissionBehaviorOverlap => "Can Change Mission Behavior",
@@ -800,21 +808,49 @@ public partial class MainWindow
     private static string BuildRuntimeLoaderHeadline(ConflictFinding finding)
     {
         string label = GetRuntimeIssueLabel(finding);
+        string phaseLabel = GetRuntimeIssuePhaseLabel(finding);
         return IsRecurringRuntimeCluster(finding)
-            ? $"The same logged {label} keeps repeating"
-            : $"Logs show a {label}";
+            ? $"The same {phaseLabel} {label} keeps repeating"
+            : $"Logs show a {phaseLabel} {label}";
     }
 
     private static string BuildRuntimeLoaderImpactSummary(ConflictFinding finding)
     {
         string summary = GetRuntimeIssueSummary(finding);
+        string phaseGuidance = BuildRuntimePhaseGuidance(finding);
         return IsRecurringRuntimeCluster(finding)
-            ? $"{summary} keeps repeating across runs. This is observed evidence from multiple sessions, but it still does not identify one guilty mod by itself."
-            : $"{summary} was seen in Bannerlord logs for this profile. This is observed evidence, but it still does not identify one guilty mod by itself.";
+            ? $"{summary} keeps repeating across runs. {phaseGuidance} This is observed evidence from multiple sessions, but it still does not identify one guilty mod by itself."
+            : $"{summary} was seen in Bannerlord logs for this profile. {phaseGuidance} This is observed evidence, but it still does not identify one guilty mod by itself.";
     }
 
     private static string BuildRuntimeLoaderRiskLabel(ConflictFinding finding)
     {
+        string phase = GetStructuredEvidenceDetail(finding, "issue-phase") ?? string.Empty;
+        if (phase == "startup")
+        {
+            return IsRecurringRuntimeCluster(finding) ? "Repeated Startup Issue" : "Startup Issue";
+        }
+
+        if (phase == "campaign-load")
+        {
+            return IsRecurringRuntimeCluster(finding) ? "Repeated Campaign Issue" : "Campaign Issue";
+        }
+
+        if (phase == "battle-entry")
+        {
+            return IsRecurringRuntimeCluster(finding) ? "Repeated Battle Issue" : "Battle Issue";
+        }
+
+        if (phase == "settlement-entry")
+        {
+            return IsRecurringRuntimeCluster(finding) ? "Repeated Settlement Issue" : "Settlement Issue";
+        }
+
+        if (phase == "save-load")
+        {
+            return IsRecurringRuntimeCluster(finding) ? "Repeated Save Load Issue" : "Save Load Issue";
+        }
+
         return GetRuntimeIssueKindToken(finding) switch
         {
             "missing-method" => IsRecurringRuntimeCluster(finding) ? "Repeated API Mismatch" : "Logged API Mismatch",
@@ -831,9 +867,9 @@ public partial class MainWindow
     {
         return GetRuntimeIssueKindToken(finding) switch
         {
-            "missing-method" => "missing-method or API mismatch",
-            "type-load" => "type-load failure",
-            "loader-failure" => "DLL or assembly load failure",
+            "missing-method" => "API mismatch",
+            "type-load" => "type load failure",
+            "loader-failure" => "load failure",
             "null-reference" => "runtime exception",
             "assertion" => "assertion failure",
             "unhandled-exception" => "unhandled exception",
@@ -905,6 +941,26 @@ public partial class MainWindow
 
     private static string? FormatEvidenceItemForDisplay(ConflictFinding finding, string evidence)
     {
+        if (evidence.StartsWith("known-rule:", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Known rule: {evidence["known-rule:".Length..]}";
+        }
+
+        if (evidence.StartsWith("ui-module:", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"UI override module: {evidence["ui-module:".Length..]}";
+        }
+
+        if (evidence.StartsWith("official-target:", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Official target module: {evidence["official-target:".Length..]}";
+        }
+
+        if (evidence.StartsWith("current-order:", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Current order: {evidence["current-order:".Length..]}";
+        }
+
         if (finding.Category == ConflictCategory.SaveFileRisk
             && TryParseSaveRiskEntry(evidence) is SaveRiskEvidenceEntry saveEntry)
         {
@@ -977,6 +1033,44 @@ public partial class MainWindow
         }
 
         return evidence;
+    }
+
+    private static bool IsKnownUiRuleFinding(ConflictFinding finding)
+    {
+        return finding.Category == ConflictCategory.LoadOrderViolation
+            && HasStructuredEvidenceKind(finding, FindingEvidenceKind.KnownRule)
+            && HasStructuredEvidenceKind(finding, FindingEvidenceKind.UiPrecedence);
+    }
+
+    private static bool HasStructuredEvidenceKind(ConflictFinding finding, FindingEvidenceKind kind)
+    {
+        return finding.StructuredEvidence?.Kinds.Contains(kind) == true;
+    }
+
+    private static string GetRuntimeIssuePhaseLabel(ConflictFinding finding)
+    {
+        return (GetStructuredEvidenceDetail(finding, "issue-phase") ?? string.Empty) switch
+        {
+            "startup" => "startup",
+            "campaign-load" => "campaign",
+            "battle-entry" => "battle",
+            "settlement-entry" => "settlement",
+            "save-load" => "save-load",
+            _ => "runtime",
+        };
+    }
+
+    private static string BuildRuntimePhaseGuidance(ConflictFinding finding)
+    {
+        return (GetStructuredEvidenceDetail(finding, "issue-phase") ?? string.Empty) switch
+        {
+            "startup" => "This points to a startup-stage problem, so validate from a clean launch first.",
+            "campaign-load" => "This points to a campaign-load path, so validate when entering or resuming campaign flow.",
+            "battle-entry" => "This points to a battle or mission entry path, so validate on battle start.",
+            "settlement-entry" => "This points to a settlement-entry path, so validate when entering towns, castles, or villages.",
+            "save-load" => "This points to a save-load path, so validate by loading the affected save directly.",
+            _ => "Treat this as a concrete logged issue on the gameplay path where it appeared.",
+        };
     }
 
     private static List<SaveRiskEvidenceEntry> GetSaveRiskEntries(ConflictFinding finding)

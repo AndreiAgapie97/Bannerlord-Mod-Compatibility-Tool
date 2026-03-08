@@ -2,25 +2,6 @@ namespace BannerlordModCompat.Core;
 
 public sealed class LoadOrderPlanner
 {
-    private static readonly string[][] CanonicalBootstrapGroups =
-    [
-        ["Bannerlord.Harmony", "Harmony", "HarmonyLib"],
-        ["Bannerlord.ButterLib", "ButterLib"],
-        ["Bannerlord.UIExtenderEx", "UIExtenderEx"],
-        ["Bannerlord.MBOptionScreen", "MBOptionScreen"],
-        ["ModConfigurationMenu", "MCM", "MCMv5", "MCMv4"],
-        ["Bannerlord.BLSE", "BLSE", "BUTRLoader"],
-        ["Native"],
-        ["SandBoxCore", "SandboxCore"],
-        ["BirthAndDeath"],
-        ["CustomBattle"],
-        ["Sandbox"],
-        ["StoryMode"],
-        ["Multiplayer"],
-        ["NavalDLC"],
-        ["FastMode"],
-    ];
-
     private static readonly Dictionary<string, int> PriorityByAlias = BuildPriorityAliasMap();
 
     private static readonly HashSet<ConflictCategory> StabilityCategories =
@@ -39,6 +20,15 @@ public sealed class LoadOrderPlanner
         IReadOnlyList<string> currentOrder,
         IReadOnlyList<string> pinnedMods,
         IReadOnlyList<ConflictFinding>? findings = null
+    )
+        => Build(modules, currentOrder, pinnedMods, findings, capabilityProfiles: null);
+
+    internal LoadOrderRecommendation Build(
+        IReadOnlyList<ModuleManifest> modules,
+        IReadOnlyList<string> currentOrder,
+        IReadOnlyList<string> pinnedMods,
+        IReadOnlyList<ConflictFinding>? findings = null,
+        IReadOnlyList<ModuleCapabilityProfile>? capabilityProfiles = null
     )
     {
         HashSet<string> moduleIds = modules
@@ -66,7 +56,14 @@ public sealed class LoadOrderPlanner
 
         List<string> warnings = [];
         int dependencyEdges = AddDependencyEdges(modules, moduleIds, edges, inDegree, warnings, rationaleKindsByModule);
-        int canonicalEdges = AddCanonicalBootstrapEdges(moduleIds, currentIndex, edges, inDegree, warnings, rationaleKindsByModule);
+        int canonicalEdges = AddRuleSetEdges(
+            moduleIds,
+            currentIndex,
+            capabilityProfiles,
+            edges,
+            inDegree,
+            warnings,
+            rationaleKindsByModule);
         int stabilityEdges = AddConflictStabilityEdges(moduleIds, currentIndex, findings, edges, inDegree, rationaleKindsByModule);
 
         PriorityQueue<string, (int tier, int current, string alpha)> queue = new();
@@ -192,37 +189,22 @@ public sealed class LoadOrderPlanner
         return added;
     }
 
-    private static int AddCanonicalBootstrapEdges(
+    private static int AddRuleSetEdges(
         IReadOnlySet<string> moduleIds,
         IReadOnlyDictionary<string, int> currentIndex,
+        IReadOnlyList<ModuleCapabilityProfile>? capabilityProfiles,
         IReadOnlyDictionary<string, HashSet<string>> edges,
         IDictionary<string, int> inDegree,
         List<string> warnings,
         IReadOnlyDictionary<string, HashSet<LoadOrderRationaleKind>> rationaleKindsByModule
     )
     {
-        List<string> chain = [];
-        foreach (string[] aliases in CanonicalBootstrapGroups)
-        {
-            string? chosen = aliases
-                .Where(moduleIds.Contains)
-                .OrderBy(id => currentIndex.GetValueOrDefault(id, int.MaxValue))
-                .ThenBy(id => id, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault();
-            if (!string.IsNullOrWhiteSpace(chosen))
-            {
-                chain.Add(chosen);
-            }
-        }
-
         int added = 0;
-        for (int i = 0; i < chain.Count - 1; i++)
+        foreach (LoadOrderRuleEdge rule in LoadOrderRuleSet.BuildEdges(moduleIds, currentIndex, capabilityProfiles))
         {
-            string from = chain[i];
-            string to = chain[i + 1];
-            MarkRationale(rationaleKindsByModule, from, LoadOrderRationaleKind.Bootstrap);
-            MarkRationale(rationaleKindsByModule, to, LoadOrderRationaleKind.Bootstrap);
-            if (TryAddEdge(from, to, optional: true, edges, inDegree, warnings))
+            MarkRationale(rationaleKindsByModule, rule.FromModuleId, rule.RationaleKind);
+            MarkRationale(rationaleKindsByModule, rule.ToModuleId, rule.RationaleKind);
+            if (TryAddEdge(rule.FromModuleId, rule.ToModuleId, rule.Optional, edges, inDegree, warnings))
             {
                 added++;
             }
@@ -485,11 +467,17 @@ public sealed class LoadOrderPlanner
     {
         bool hasDependency = kinds.Contains(LoadOrderRationaleKind.Dependency);
         bool hasBootstrap = kinds.Contains(LoadOrderRationaleKind.Bootstrap);
+        bool hasUiPrecedence = kinds.Contains(LoadOrderRationaleKind.OfficialUiPrecedence);
         bool hasStability = kinds.Contains(LoadOrderRationaleKind.StabilityPreference);
 
         if (primaryKind == LoadOrderRationaleKind.Pin)
         {
             return "Pinned near the current slot while the planner preserved surrounding rules where possible.";
+        }
+
+        if (hasUiPrecedence)
+        {
+            return "Position is shaped by a known Bannerlord UI precedence rule for official-module overrides.";
         }
 
         if (hasDependency && hasBootstrap)
@@ -565,9 +553,10 @@ public sealed class LoadOrderPlanner
     private static Dictionary<string, int> BuildPriorityAliasMap()
     {
         Dictionary<string, int> map = new(StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < CanonicalBootstrapGroups.Length; i++)
+        IReadOnlyList<string[]> groups = BannerlordKnowledgeBase.GetCanonicalBootstrapGroups();
+        for (int i = 0; i < groups.Count; i++)
         {
-            foreach (string alias in CanonicalBootstrapGroups[i])
+            foreach (string alias in groups[i])
             {
                 map[alias] = i;
             }
@@ -594,10 +583,11 @@ public sealed class LoadOrderPlanner
             LoadOrderRationaleKind.Pin => 0,
             LoadOrderRationaleKind.Dependency => 1,
             LoadOrderRationaleKind.Bootstrap => 2,
-            LoadOrderRationaleKind.StabilityPreference => 3,
-            LoadOrderRationaleKind.DisabledInstalled => 4,
-            LoadOrderRationaleKind.ManualReview => 5,
-            _ => 6,
+            LoadOrderRationaleKind.OfficialUiPrecedence => 3,
+            LoadOrderRationaleKind.StabilityPreference => 4,
+            LoadOrderRationaleKind.DisabledInstalled => 5,
+            LoadOrderRationaleKind.ManualReview => 6,
+            _ => 7,
         };
     }
 }
