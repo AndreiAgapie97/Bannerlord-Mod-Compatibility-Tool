@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Security.Cryptography;
+using System.Text;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
@@ -55,6 +57,8 @@ internal sealed class ModuleCapabilityProfiler
         "MCMv4",
     };
 
+    private readonly LocalScanCache _cache = new("capability-profile");
+
     public IReadOnlyList<ModuleCapabilityProfile> BuildProfiles(
         IReadOnlyList<ModuleManifest> modules,
         bool customOnlyFocus,
@@ -69,11 +73,38 @@ internal sealed class ModuleCapabilityProfiler
             return [];
         }
 
-        TypeHierarchyIndex hierarchy = BuildHierarchy(modules, warnings);
         List<ModuleCapabilityProfile> profiles = [];
+        string hierarchyFingerprint = ComputeHierarchyFingerprint(modules);
+        List<(ModuleManifest Module, ModuleCapabilityScanInputs Inputs)> pending = [];
+
         foreach (ModuleManifest module in scanScope)
         {
-            ModuleCapabilityProfile profile = BuildModuleProfile(module, hierarchy, warnings);
+            ModuleCapabilityScanInputs inputs = BuildCapabilityScanInputs(module, warnings);
+            if (_cache.TryRead(GetCacheScope(module, hierarchyFingerprint), inputs.Fingerprint, out CapabilityProfileCacheEntry? cached)
+                && cached is not null)
+            {
+                ModuleCapabilityProfile cachedProfile = BuildModuleProfileFromCache(module, cached, inputs);
+                if (cachedProfile.HasSignals)
+                {
+                    profiles.Add(cachedProfile);
+                }
+
+                continue;
+            }
+
+            pending.Add((module, inputs));
+        }
+
+        if (pending.Count == 0)
+        {
+            return profiles;
+        }
+
+        TypeHierarchyIndex hierarchy = BuildHierarchy(modules, warnings);
+        foreach ((ModuleManifest module, ModuleCapabilityScanInputs inputs) in pending)
+        {
+            ModuleCapabilityProfile profile = BuildModuleProfile(module, hierarchy, warnings, inputs);
+            _cache.Write(GetCacheScope(module, hierarchyFingerprint), inputs.Fingerprint, CapabilityProfileCacheEntry.FromProfile(profile));
             if (!profile.HasSignals)
             {
                 continue;
@@ -83,6 +114,85 @@ internal sealed class ModuleCapabilityProfiler
         }
 
         return profiles;
+    }
+
+    private static string GetCacheScope(ModuleManifest module, string hierarchyFingerprint)
+    {
+        return $"{Path.GetFullPath(module.RootPath)}|hierarchy:{hierarchyFingerprint}";
+    }
+
+    private static string ComputeHierarchyFingerprint(IReadOnlyList<ModuleManifest> modules)
+    {
+        string payload = string.Join('|', modules
+            .SelectMany(m => m.Dlls)
+            .Select(d => d.Sha256)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return "no-dlls";
+        }
+
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+        return Convert.ToHexString(hash[..8]);
+    }
+
+    private static ModuleCapabilityScanInputs BuildCapabilityScanInputs(ModuleManifest module, List<string> warnings)
+    {
+        List<string> relevant = [];
+        relevant.AddRange(module.Dlls.Select(d => d.Path));
+
+        bool hasGauntletUiXml = false;
+        string guiPath = Path.Combine(module.RootPath, "GUI");
+        if (Directory.Exists(guiPath))
+        {
+            string[] guiXmlFiles;
+            try
+            {
+                guiXmlFiles = Directory.EnumerateFiles(guiPath, "*.xml", SearchOption.AllDirectories).ToArray();
+            }
+            catch (Exception ex)
+            {
+                AddWarning(warnings, $"Code capability scan warning in '{guiPath}': {ex.Message}");
+                guiXmlFiles = [];
+            }
+
+            if (guiXmlFiles.Length > 0)
+            {
+                hasGauntletUiXml = true;
+                relevant.AddRange(guiXmlFiles);
+            }
+        }
+
+        bool hasXsltTransforms = false;
+        string moduleDataPath = Path.Combine(module.RootPath, "ModuleData");
+        if (Directory.Exists(moduleDataPath))
+        {
+            string[] xsltFiles;
+            try
+            {
+                xsltFiles = Directory.EnumerateFiles(moduleDataPath, "*.xslt", SearchOption.AllDirectories).ToArray();
+            }
+            catch (Exception ex)
+            {
+                AddWarning(warnings, $"Code capability scan warning in '{moduleDataPath}': {ex.Message}");
+                xsltFiles = [];
+            }
+
+            if (xsltFiles.Length > 0)
+            {
+                hasXsltTransforms = true;
+                relevant.AddRange(xsltFiles);
+            }
+        }
+
+        return new ModuleCapabilityScanInputs(
+            Fingerprint: LocalScanCache.ComputeFingerprint(relevant),
+            HasGauntletUiXml: hasGauntletUiXml,
+            HasXsltTransforms: hasXsltTransforms
+        );
     }
 
     private static TypeHierarchyIndex BuildHierarchy(
@@ -131,7 +241,8 @@ internal sealed class ModuleCapabilityProfiler
     private static ModuleCapabilityProfile BuildModuleProfile(
         ModuleManifest module,
         TypeHierarchyIndex hierarchy,
-        List<string> warnings)
+        List<string> warnings,
+        ModuleCapabilityScanInputs inputs)
     {
         ModuleCapabilityProfile profile = new(module.Id, module.IsOfficial, module.IsFramework);
         profile.HasUiExtenderDependency = module.Dependencies.Any(d =>
@@ -142,16 +253,12 @@ internal sealed class ModuleCapabilityProfiler
             .Where(ModuleTaxonomy.IsOfficial)
             .Distinct(StringComparer.OrdinalIgnoreCase));
 
-        string guiPath = Path.Combine(module.RootPath, "GUI");
-        if (Directory.Exists(guiPath))
-        {
-            profile.HasGauntletUiXml = Directory.EnumerateFiles(guiPath, "*.xml", SearchOption.AllDirectories).Any();
-        }
+        profile.HasGauntletUiXml = inputs.HasGauntletUiXml;
 
         string moduleDataPath = Path.Combine(module.RootPath, "ModuleData");
         if (Directory.Exists(moduleDataPath))
         {
-            profile.HasXsltTransforms = Directory.EnumerateFiles(moduleDataPath, "*.xslt", SearchOption.AllDirectories).Any();
+            profile.HasXsltTransforms = inputs.HasXsltTransforms;
             foreach (string entityType in module.XmlEntities
                          .Select(x => x.EntityType)
                          .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -265,6 +372,42 @@ internal sealed class ModuleCapabilityProfiler
                 AddWarning(warnings, $"Capability analysis warning in '{dll.Path}': {ex.Message}");
             }
         }
+
+        return profile;
+    }
+
+    private static ModuleCapabilityProfile BuildModuleProfileFromCache(
+        ModuleManifest module,
+        CapabilityProfileCacheEntry cached,
+        ModuleCapabilityScanInputs inputs)
+    {
+        ModuleCapabilityProfile profile = cached.ToProfile(module.Id, module.IsOfficial, module.IsFramework);
+
+        // Always prefer live manifest-derived signals.
+        profile.HasUiExtenderDependency = module.Dependencies.Any(d =>
+            d.Id.Equals("Bannerlord.UIExtenderEx", StringComparison.OrdinalIgnoreCase)
+            || d.Id.Equals("UIExtenderEx", StringComparison.OrdinalIgnoreCase));
+
+        profile.OfficialDependencyTargets.Clear();
+        profile.OfficialDependencyTargets.AddRange(module.Dependencies
+            .Select(d => d.Id)
+            .Where(ModuleTaxonomy.IsOfficial)
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+
+        profile.HasGauntletUiXml = inputs.HasGauntletUiXml;
+        profile.HasXsltTransforms = inputs.HasXsltTransforms;
+
+        profile.XmlEntityTypes.Clear();
+        foreach (string entityType in module.XmlEntities
+                     .Select(x => x.EntityType)
+                     .Where(x => !string.IsNullOrWhiteSpace(x))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            profile.XmlEntityTypes.Add(entityType);
+        }
+
+        profile.HasCodelessGauntletUi = profile.HasGauntletUiXml
+            && module.Dlls.All(d => !File.Exists(d.Path) || !IsModCodeAssembly(d));
 
         return profile;
     }
@@ -702,5 +845,136 @@ internal sealed record LifecycleRegistrationRecord(
     string Phase,
     string HookMethod,
     RegistrationActionKind ActionKind,
+    string EvidencePath
+);
+
+internal sealed record ModuleCapabilityScanInputs(
+    string Fingerprint,
+    bool HasGauntletUiXml,
+    bool HasXsltTransforms
+);
+
+internal sealed record CapabilityProfileCacheEntry
+{
+    public bool CallsAddBehavior { get; init; }
+    public bool CallsAddModel { get; init; }
+    public bool CallsAddMissionBehavior { get; init; }
+    public bool HasLifecycleHooks { get; init; }
+    public List<string> CampaignBehaviorTypes { get; init; } = [];
+    public List<string> GameModelTypes { get; init; } = [];
+    public List<string> MissionBehaviorTypes { get; init; } = [];
+    public List<string> CampaignEventHooks { get; init; } = [];
+    public List<string> LifecycleHooks { get; init; } = [];
+    public Dictionary<string, List<string>> ModelFamilies { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, List<string>> MissionFamilies { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public List<CapabilityLifecycleRecordCacheEntry> LifecycleRegistrations { get; init; } = [];
+
+    public static CapabilityProfileCacheEntry FromProfile(ModuleCapabilityProfile profile)
+    {
+        return new CapabilityProfileCacheEntry
+        {
+            CallsAddBehavior = profile.CallsAddBehavior,
+            CallsAddModel = profile.CallsAddModel,
+            CallsAddMissionBehavior = profile.CallsAddMissionBehavior,
+            HasLifecycleHooks = profile.HasLifecycleHooks,
+            CampaignBehaviorTypes = profile.CampaignBehaviorTypes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList(),
+            GameModelTypes = profile.GameModelTypes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList(),
+            MissionBehaviorTypes = profile.MissionBehaviorTypes.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList(),
+            CampaignEventHooks = profile.CampaignEventHooks.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList(),
+            LifecycleHooks = profile.LifecycleHooks.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList(),
+            ModelFamilies = profile.ModelFamilies.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList(),
+                StringComparer.OrdinalIgnoreCase),
+            MissionFamilies = profile.MissionFamilies.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList(),
+                StringComparer.OrdinalIgnoreCase),
+            LifecycleRegistrations = profile.LifecycleRegistrations
+                .Select(r => new CapabilityLifecycleRecordCacheEntry(
+                    r.Phase,
+                    r.HookMethod,
+                    r.ActionKind.ToString(),
+                    r.EvidencePath))
+                .OrderBy(x => x.Phase, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.HookMethod, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.ActionKindToken, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+        };
+    }
+
+    public ModuleCapabilityProfile ToProfile(string moduleId, bool isOfficial, bool isFramework)
+    {
+        ModuleCapabilityProfile profile = new(moduleId, isOfficial, isFramework)
+        {
+            CallsAddBehavior = CallsAddBehavior,
+            CallsAddModel = CallsAddModel,
+            CallsAddMissionBehavior = CallsAddMissionBehavior,
+            HasLifecycleHooks = HasLifecycleHooks,
+        };
+
+        foreach (string value in CampaignBehaviorTypes)
+        {
+            profile.CampaignBehaviorTypes.Add(value);
+        }
+
+        foreach (string value in GameModelTypes)
+        {
+            profile.GameModelTypes.Add(value);
+        }
+
+        foreach (string value in MissionBehaviorTypes)
+        {
+            profile.MissionBehaviorTypes.Add(value);
+        }
+
+        foreach (string value in CampaignEventHooks)
+        {
+            profile.CampaignEventHooks.Add(value);
+        }
+
+        foreach (string value in LifecycleHooks)
+        {
+            profile.LifecycleHooks.Add(value);
+        }
+
+        foreach ((string family, List<string> types) in ModelFamilies)
+        {
+            foreach (string typeName in types)
+            {
+                profile.AddModelFamily(family, typeName);
+            }
+        }
+
+        foreach ((string family, List<string> types) in MissionFamilies)
+        {
+            foreach (string typeName in types)
+            {
+                profile.AddMissionFamily(family, typeName);
+            }
+        }
+
+        foreach (CapabilityLifecycleRecordCacheEntry record in LifecycleRegistrations)
+        {
+            if (!Enum.TryParse(record.ActionKindToken, ignoreCase: true, out RegistrationActionKind actionKind))
+            {
+                continue;
+            }
+
+            profile.LifecycleRegistrations.Add(new LifecycleRegistrationRecord(
+                record.Phase,
+                record.HookMethod,
+                actionKind,
+                record.EvidencePath));
+        }
+
+        return profile;
+    }
+}
+
+internal sealed record CapabilityLifecycleRecordCacheEntry(
+    string Phase,
+    string HookMethod,
+    string ActionKindToken,
     string EvidencePath
 );

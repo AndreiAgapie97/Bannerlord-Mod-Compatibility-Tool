@@ -159,6 +159,13 @@ public partial class MainWindow : Window
         UpdateOnboardingTip();
         ApplyFocusedPlayerLayout();
         ApplyValidatePlayerSurface();
+
+        // WPF can finalize TabControl selection/templating after Loaded; refresh once post-render so the
+        // Findings quick workflow buttons are correct on first launch (no "switch tabs to see Scan" bug).
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            UpdateOnboardingTip();
+        }), DispatcherPriority.ContextIdle);
     }
 
     private async void BtnRunScan_Click(object sender, RoutedEventArgs e)
@@ -2321,17 +2328,35 @@ public partial class MainWindow : Window
 
         return chains
             .Where(chain => !string.Equals(chain.Finding, "No runtime-linked findings.", StringComparison.OrdinalIgnoreCase))
-            .Select(chain => new PlayerRuntimeSummaryRow
+            .Select(chain =>
             {
-                SelectionKey = BuildPlayerRuntimeSummarySelectionKey(chain),
-                Source = chain,
-                Headline = chain.Finding,
-                Explanation = chain.Meaning,
-                Modules = chain.Modules,
-                WhenAndLog = BuildPlayerRuntimeWhenAndLog(chain, sessionsByKey),
-                NextStep = $"Try this first: {chain.QuickFix}",
-                HasLogPath = !string.IsNullOrWhiteSpace(chain.LogPath),
+                List<string> customModules = GetRuntimeChainModuleIds(chain)
+                    .Where(ModuleTaxonomy.IsCustom)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                // Player UX policy: runtime support should focus on custom mods.
+                // If a runtime note only references official/framework modules (e.g. Sandbox), treat it as non-actionable noise.
+                if (customModules.Count == 0)
+                {
+                    return null;
+                }
+
+                return new PlayerRuntimeSummaryRow
+                {
+                    SelectionKey = BuildPlayerRuntimeSummarySelectionKey(chain),
+                    Source = chain,
+                    Headline = chain.Finding,
+                    Explanation = chain.Meaning,
+                    Modules = string.Join(", ", customModules),
+                    WhenAndLog = BuildPlayerRuntimeWhenAndLog(chain, sessionsByKey),
+                    NextStep = $"Try this first: {chain.QuickFix}",
+                    HasLogPath = !string.IsNullOrWhiteSpace(chain.LogPath),
+                };
             })
+            .Where(row => row is not null)
+            .Select(row => row!)
             .ToList();
     }
 
@@ -2360,7 +2385,7 @@ public partial class MainWindow : Window
 
     private static string BuildPlayerRuntimeSummarySelectionKey(RuntimeChainRow row)
     {
-        return string.Join("|", row.SessionKey, row.LogPath, row.LogFile, row.Finding, row.Modules);
+        return string.Join("|", row.SessionKey, row.LogPath, row.LogFile, row.Finding, row.ModuleKey);
     }
 
     private static string BuildPlayerRuntimeWhenAndLog(
@@ -3011,9 +3036,9 @@ public partial class MainWindow : Window
         object activeTab = GetActiveMainTab();
         BorderOnboardingTip.Visibility = Visibility.Visible;
         GridOnboardingMessage.Visibility = _onboardingTipsDismissed ? Visibility.Collapsed : Visibility.Visible;
-        GridQuickWorkflowSteps.Visibility = !ReferenceEquals(activeTab, TabFindings)
-            ? Visibility.Collapsed
-            : Visibility.Visible;
+        bool showQuickWorkflow = TabFindings is not null
+            && (TabFindings.IsSelected || ReferenceEquals(activeTab, TabFindings));
+        GridQuickWorkflowSteps.Visibility = showQuickWorkflow ? Visibility.Visible : Visibility.Collapsed;
         BtnDismissOnboardingTip.IsEnabled = !_isBusy;
         if (!_onboardingTipsDismissed)
         {

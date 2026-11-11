@@ -4,6 +4,7 @@
 TestResults/
 artifacts/
 publish/
+BannerlordModCompatApp-Release*/
 .vs/
 
 # IDE / user-local files

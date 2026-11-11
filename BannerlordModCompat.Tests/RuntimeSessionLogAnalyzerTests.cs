@@ -307,6 +307,40 @@ public class RuntimeSessionLogAnalyzerTests
     }
 
     [Fact]
+    public void Analyze_DoesNotSurfaceBroadErrorMarkersWhenOnlyEngineDllIsMentioned()
+    {
+        string tempRoot = CreateTempRoot();
+        try
+        {
+            string launcherPath = Path.Combine(tempRoot, "launcher_log_999004.txt");
+            File.WriteAllLines(launcherPath,
+            [
+                "ERROR: TaleWorlds.CampaignSystem.dll failed to do a thing",
+                "ERROR: some other failure text without a concrete exception or loader anchor",
+            ]);
+
+            RuntimeSessionLogAnalyzer analyzer = new();
+            List<string> warnings = [];
+            List<ConflictFinding> findings = analyzer.Analyze(
+                modules:
+                [
+                    BuildModule("ModA"),
+                ],
+                currentOrder: ["ModA"],
+                customOnlyFocus: false,
+                warnings: warnings,
+                logsRootOverride: tempRoot
+            ).ToList();
+
+            Assert.Empty(findings);
+        }
+        finally
+        {
+            DeleteTempRoot(tempRoot);
+        }
+    }
+
+    [Fact]
     public void Analyze_ClassifiesMissionExceptionAsBattleEntryIssue()
     {
         string tempRoot = CreateTempRoot();
@@ -342,7 +376,44 @@ public class RuntimeSessionLogAnalyzerTests
         }
     }
 
-    private static ModuleManifest BuildModule(string id, string? dllName = null)
+    [Fact]
+    public void Analyze_DoesNotAttributeRuntimeIssuesToOfficialModulesWhenFallingBackToLoadOrderContext()
+    {
+        string tempRoot = CreateTempRoot();
+        try
+        {
+            string rglErrorsPath = Path.Combine(tempRoot, "rgl_log_errors_999005.txt");
+            File.WriteAllLines(rglErrorsPath,
+            [
+                "System.MissingMethodException: Method not found: 'Void TaleWorlds.CampaignSystem.CampaignBehaviorManager.AddBehavior(TaleWorlds.CampaignSystem.CampaignBehaviorBase)'",
+            ]);
+
+            RuntimeSessionLogAnalyzer analyzer = new();
+            List<string> warnings = [];
+            List<ConflictFinding> findings = analyzer.Analyze(
+                modules:
+                [
+                    BuildModule("Native", dllName: "TaleWorlds.CampaignSystem.dll", isOfficial: true),
+                    BuildModule("BadPatch"),
+                ],
+                currentOrder: ["Native", "BadPatch"],
+                customOnlyFocus: false,
+                warnings: warnings,
+                logsRootOverride: tempRoot
+            ).ToList();
+
+            ConflictFinding loader = Assert.Single(findings, f => f.Category == ConflictCategory.RuntimeLoaderFailure);
+            Assert.Contains("BadPatch", loader.ModuleIds, StringComparer.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Native", loader.ModuleIds, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal("missing-method", loader.StructuredEvidence!.Details["issue-kind"]);
+        }
+        finally
+        {
+            DeleteTempRoot(tempRoot);
+        }
+    }
+
+    private static ModuleManifest BuildModule(string id, string? dllName = null, bool isOfficial = false, bool isFramework = false)
     {
         List<DllArtifact> dlls = [];
         if (!string.IsNullOrWhiteSpace(dllName))
@@ -365,8 +436,8 @@ public class RuntimeSessionLogAnalyzerTests
             RootPath = $@"C:\Test\{id}",
             SubModulePath = $@"C:\Test\{id}\SubModule.xml",
             SourceType = ModSourceType.Local,
-            IsOfficial = false,
-            IsFramework = false,
+            IsOfficial = isOfficial,
+            IsFramework = isFramework,
             Dependencies = [],
             ExplicitIncompatibilities = [],
             XmlEntities = [],

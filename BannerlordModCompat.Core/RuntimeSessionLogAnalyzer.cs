@@ -37,6 +37,11 @@ public sealed class RuntimeSessionLogAnalyzer
         RegexOptions.IgnoreCase | RegexOptions.Compiled
     );
 
+    private static readonly Regex ExceptionTypeRegex = new(
+        @"\b[A-Za-z0-9_.]+Exception\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled
+    );
+
     private static readonly string[] SignatureAnchorTokens =
     [
         "missingmethodexception",
@@ -129,6 +134,7 @@ public sealed class RuntimeSessionLogAnalyzer
         ConflictFinding? loaderFinding = BuildRuntimeLoaderFailureFinding(
             runtimeIssues,
             runtimeModules,
+            currentOrder,
             customOnlyFocus,
             byId,
             session,
@@ -477,10 +483,10 @@ public sealed class RuntimeSessionLogAnalyzer
     )
     {
         HashSet<string> runtimeSet = runtimeModules
-            .Where(id => !customOnlyFocus || (byId.TryGetValue(id, out ModuleManifest? mod) && mod.IsCustom))
+            .Where(id => IsCustomModuleId(id, byId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         HashSet<string> currentSet = currentOrder
-            .Where(id => !customOnlyFocus || (byId.TryGetValue(id, out ModuleManifest? mod) && mod.IsCustom))
+            .Where(id => IsCustomModuleId(id, byId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         if (runtimeSet.Count == 0)
@@ -535,6 +541,7 @@ public sealed class RuntimeSessionLogAnalyzer
     private static ConflictFinding? BuildRuntimeLoaderFailureFinding(
         IReadOnlyList<RuntimeIssueSignature> runtimeIssues,
         IReadOnlySet<string> runtimeModules,
+        IReadOnlyList<string> currentOrder,
         bool customOnlyFocus,
         IReadOnlyDictionary<string, ModuleManifest> byId,
         SessionFiles session,
@@ -560,7 +567,7 @@ public sealed class RuntimeSessionLogAnalyzer
 
         List<string> moduleIds = runtimeIssues
             .SelectMany(issue => issue.ModuleIds)
-            .Where(id => !customOnlyFocus || (byId.TryGetValue(id, out ModuleManifest? mod) && mod.IsCustom))
+            .Where(id => IsCustomModuleId(id, byId))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
             .Take(24)
@@ -568,11 +575,26 @@ public sealed class RuntimeSessionLogAnalyzer
         if (moduleIds.Count == 0)
         {
             moduleIds = runtimeModules
-                .Where(id => !customOnlyFocus || (byId.TryGetValue(id, out ModuleManifest? mod) && mod.IsCustom))
+                .Where(id => IsCustomModuleId(id, byId))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
                 .Take(24)
                 .ToList();
+        }
+
+        if (moduleIds.Count == 0)
+        {
+            moduleIds = currentOrder
+                .Where(id => IsCustomModuleId(id, byId))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+                .Take(24)
+                .ToList();
+        }
+
+        if (moduleIds.Count == 0)
+        {
+            return null;
         }
 
         ConflictSeverity severity = runtimeIssues.Any(issue => issue.Criticality == RuntimeIssueCriticality.Critical)
@@ -656,13 +678,13 @@ public sealed class RuntimeSessionLogAnalyzer
 
             HashSet<string> sessionModules = runtimeIssues
                 .SelectMany(issue => issue.ModuleIds)
-                .Where(id => !customOnlyFocus || (byId.TryGetValue(id, out ModuleManifest? mod) && mod.IsCustom))
+                .Where(id => IsCustomModuleId(id, byId))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (sessionModules.Count == 0)
             {
                 foreach (string moduleId in runtimeModules)
                 {
-                    if (!customOnlyFocus || (byId.TryGetValue(moduleId, out ModuleManifest? mod) && mod.IsCustom))
+                    if (IsCustomModuleId(moduleId, byId))
                     {
                         sessionModules.Add(moduleId);
                     }
@@ -673,7 +695,7 @@ public sealed class RuntimeSessionLogAnalyzer
             {
                 foreach (string moduleId in currentOrder)
                 {
-                    if (!customOnlyFocus || (byId.TryGetValue(moduleId, out ModuleManifest? mod) && mod.IsCustom))
+                    if (IsCustomModuleId(moduleId, byId))
                     {
                         sessionModules.Add(moduleId);
                     }
@@ -746,7 +768,7 @@ public sealed class RuntimeSessionLogAnalyzer
         if (modulesFromCluster.Count == 0)
         {
             modulesFromCluster = currentOrder
-                .Where(id => !customOnlyFocus || (byId.TryGetValue(id, out ModuleManifest? mod) && mod.IsCustom))
+                .Where(id => IsCustomModuleId(id, byId))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(24)
                 .ToList();
@@ -863,6 +885,7 @@ public sealed class RuntimeSessionLogAnalyzer
     )
     {
         Dictionary<string, List<string>> moduleOwnersByDll = modules
+            .Where(m => m.IsCustom)
             .SelectMany(m => m.Dlls.Select(d => (m.Id, d.FileName)))
             .GroupBy(x => x.FileName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
@@ -1047,21 +1070,21 @@ public sealed class RuntimeSessionLogAnalyzer
             return RuntimeIssueKind.UnhandledException;
         }
 
-        bool broadErrorMarker = normalized.Contains("error:", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("failed", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("error", StringComparison.OrdinalIgnoreCase);
-        return broadErrorMarker
-            ? RuntimeIssueKind.GenericRuntimeError
-            : null;
+        if (ExceptionTypeRegex.IsMatch(normalizedIssue))
+        {
+            return RuntimeIssueKind.ManagedException;
+        }
+
+        return null;
     }
 
     private static RuntimeIssueCriticality DetermineRuntimeIssueCriticality(RuntimeIssueKind kind)
     {
         return kind switch
         {
-            RuntimeIssueKind.LoaderFailure or RuntimeIssueKind.MissingMethod or RuntimeIssueKind.TypeLoad or RuntimeIssueKind.UnhandledException
+            RuntimeIssueKind.UnhandledException or RuntimeIssueKind.Assertion
                 => RuntimeIssueCriticality.Critical,
-            RuntimeIssueKind.NullReference or RuntimeIssueKind.Assertion
+            RuntimeIssueKind.LoaderFailure or RuntimeIssueKind.MissingMethod or RuntimeIssueKind.TypeLoad or RuntimeIssueKind.NullReference or RuntimeIssueKind.ManagedException
                 => RuntimeIssueCriticality.High,
             _ => RuntimeIssueCriticality.Advisory,
         };
@@ -1114,6 +1137,7 @@ public sealed class RuntimeSessionLogAnalyzer
             RuntimeIssueKind.MissingMethod => "Missing method or game API mismatch",
             RuntimeIssueKind.TypeLoad => "Type load failure",
             RuntimeIssueKind.NullReference => "Null reference runtime exception",
+            RuntimeIssueKind.ManagedException => "Runtime exception",
             RuntimeIssueKind.Assertion => "Engine or loader assertion",
             RuntimeIssueKind.UnhandledException => "Unhandled runtime exception",
             _ => "Runtime error marker",
@@ -1126,7 +1150,7 @@ public sealed class RuntimeSessionLogAnalyzer
         {
             RuntimeIssueKind.LoaderFailure => "Startup can fail because required assemblies or DLLs are not loading cleanly.",
             RuntimeIssueKind.MissingMethod or RuntimeIssueKind.TypeLoad => "Game API mismatches can break startup or fail when the affected code path executes.",
-            RuntimeIssueKind.NullReference or RuntimeIssueKind.UnhandledException => "The affected gameplay path can fail at runtime when this exception path is reached.",
+            RuntimeIssueKind.NullReference or RuntimeIssueKind.UnhandledException or RuntimeIssueKind.ManagedException => "The affected gameplay path can fail at runtime when this exception path is reached.",
             RuntimeIssueKind.Assertion => "The engine or loader is already reporting an assertion failure on this runtime path.",
             _ => "Runtime logs already show a concrete failure marker on this profile.",
         };
@@ -1138,7 +1162,7 @@ public sealed class RuntimeSessionLogAnalyzer
         {
             RuntimeIssueKind.LoaderFailure => "Fix the assembly or DLL load problem first, then retest from a clean launch.",
             RuntimeIssueKind.MissingMethod or RuntimeIssueKind.TypeLoad => "Match mod builds to the same Bannerlord API baseline, then retest from a clean launch.",
-            RuntimeIssueKind.NullReference or RuntimeIssueKind.UnhandledException => "Reproduce the same gameplay path once with the current stack, then isolate only if the failure returns.",
+            RuntimeIssueKind.NullReference or RuntimeIssueKind.UnhandledException or RuntimeIssueKind.ManagedException => "Reproduce the same gameplay path once with the current stack, then isolate only if the failure returns.",
             RuntimeIssueKind.Assertion => "Treat the assertion as a hard runtime blocker and resolve the underlying module mismatch before deeper validation.",
             _ => "Use the logged error as a concrete baseline, then retest from a clean launch after each change.",
         };
@@ -1163,9 +1187,12 @@ public sealed class RuntimeSessionLogAnalyzer
 
             if (byId.TryGetValue(id, out ModuleManifest? module))
             {
-                inferred.Add(module.Id);
+                if (module.IsCustom)
+                {
+                    inferred.Add(module.Id);
+                }
             }
-            else
+            else if (ModuleTaxonomy.IsCustom(id))
             {
                 inferred.Add(id);
             }
@@ -1186,6 +1213,11 @@ public sealed class RuntimeSessionLogAnalyzer
 
         foreach (ModuleManifest module in modules)
         {
+            if (!module.IsCustom)
+            {
+                continue;
+            }
+
             if (ContainsToken(issue, module.Id) || ContainsToken(issue, module.Name))
             {
                 inferred.Add(module.Id);
@@ -1193,7 +1225,7 @@ public sealed class RuntimeSessionLogAnalyzer
         }
 
         return inferred
-            .Where(id => !customOnlyFocus || (byId.TryGetValue(id, out ModuleManifest? mod) && mod.IsCustom))
+            .Where(id => IsCustomModuleId(id, byId))
             .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
             .Take(24)
             .ToList();
@@ -1262,6 +1294,7 @@ public sealed class RuntimeSessionLogAnalyzer
             "missing-method" => RuntimeIssueKind.MissingMethod,
             "type-load" => RuntimeIssueKind.TypeLoad,
             "null-reference" => RuntimeIssueKind.NullReference,
+            "managed-exception" => RuntimeIssueKind.ManagedException,
             "assertion" => RuntimeIssueKind.Assertion,
             "unhandled-exception" => RuntimeIssueKind.UnhandledException,
             _ => RuntimeIssueKind.GenericRuntimeError,
@@ -1276,6 +1309,7 @@ public sealed class RuntimeSessionLogAnalyzer
             RuntimeIssueKind.MissingMethod => "missing-method",
             RuntimeIssueKind.TypeLoad => "type-load",
             RuntimeIssueKind.NullReference => "null-reference",
+            RuntimeIssueKind.ManagedException => "runtime-exception",
             RuntimeIssueKind.Assertion => "assertion",
             RuntimeIssueKind.UnhandledException => "unhandled-exception",
             _ => "runtime",
@@ -1290,6 +1324,7 @@ public sealed class RuntimeSessionLogAnalyzer
             RuntimeIssueKind.MissingMethod => "missing-method",
             RuntimeIssueKind.TypeLoad => "type-load",
             RuntimeIssueKind.NullReference => "null-reference",
+            RuntimeIssueKind.ManagedException => "managed-exception",
             RuntimeIssueKind.Assertion => "assertion",
             RuntimeIssueKind.UnhandledException => "unhandled-exception",
             _ => "generic-runtime-error",
@@ -1496,6 +1531,18 @@ public sealed class RuntimeSessionLogAnalyzer
 
     private static bool IsBoundary(char c) => !char.IsLetterOrDigit(c) && c != '_';
 
+    private static bool IsCustomModuleId(string moduleId, IReadOnlyDictionary<string, ModuleManifest> byId)
+    {
+        if (string.IsNullOrWhiteSpace(moduleId))
+        {
+            return false;
+        }
+
+        return byId.TryGetValue(moduleId, out ModuleManifest? manifest)
+            ? manifest.IsCustom
+            : ModuleTaxonomy.IsCustom(moduleId);
+    }
+
     private enum LogFileKind
     {
         Launcher,
@@ -1520,6 +1567,7 @@ public sealed class RuntimeSessionLogAnalyzer
         MissingMethod,
         TypeLoad,
         NullReference,
+        ManagedException,
         Assertion,
         UnhandledException,
         GenericRuntimeError,
